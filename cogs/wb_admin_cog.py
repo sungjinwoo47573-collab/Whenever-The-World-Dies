@@ -2,47 +2,46 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.banner_manager import BannerManager
 
 class WorldBossAdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="worldbosslist", description="List all registered World Bosses and check for broken URLs.")
-    async def world_boss_list(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        
-        # Pulling from the NPC collection where is_world_boss is True
-        bosses = await db.npcs.find({"is_world_boss": True}).to_list(length=50)
+    @app_commands.command(name="wb_setup_channel", description="Set the raid channel for World Bosses.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def wb_setup_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        await db.db["settings"].update_one(
+            {"setting": "wb_channel"},
+            {"$set": {"channel_id": channel.id}},
+            upsert=True
+        )
+        embed = discord.Embed(title="⚙️ SYSTEM CONFIG", description=f"Raid channel set: {channel.mention}", color=0x2b2d31)
+        BannerManager.apply(embed, type="admin")
+        await interaction.response.send_message(embed=embed)
 
-        if not bosses:
-            return await interaction.followup.send("📭 No World Bosses found. Use `/wb_create` to add one!")
+    @app_commands.command(name="wb_create", description="Register a Special Grade Boss.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def wb_create(self, interaction: discord.Interaction, name: str, hp: int, base_dmg: int, image_url: str):
+        boss_data = {
+            "name": name, "max_hp": hp, "current_hp": 0,
+            "base_dmg": base_dmg, "image": image_url, "is_world_boss": True
+        }
+        await db.npcs.update_one({"name": name}, {"$set": boss_data}, upsert=True)
+        embed = discord.Embed(title="📜 BOSS REGISTERED", description=f"**{name}** added to library.", color=0x2ecc71)
+        embed.set_thumbnail(url=image_url)
+        BannerManager.apply(embed, type="admin")
+        await interaction.response.send_message(embed=embed)
 
-        embed = discord.Embed(title="📂 World Boss Archives", color=0x5865F2)
+    @app_commands.command(name="wb_skills", description="Assign techniques to the boss.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def wb_skills(self, interaction: discord.Interaction, name: str, technique: str, weapon: str, style: str):
+        await db.npcs.update_one(
+            {"name": name},
+            {"$set": {"technique": technique, "weapon": weapon, "fighting_style": style}}
+        )
+        await interaction.response.send_message(f"⚔️ {name} armed with {technique}, {weapon}, and {style}.")
 
-        for boss in bosses:
-            url = boss.get('image', 'No URL')
-            # Check for the error that crashed your Railway logs
-            url_status = "✅ Valid" if url.startswith("http") else "❌ BROKEN (Delete this)"
-            
-            embed.add_field(
-                name=f"👹 {boss['name']}",
-                value=f"**HP:** `{boss.get('max_hp', 0):,}`\n**URL:** {url_status}\n[View Image]({url})",
-                inline=False
-            )
-
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="wb_delete", description="Remove a World Boss from the database.")
-    @app_commands.describe(name="The exact name of the boss to delete")
-    async def wb_delete(self, interaction: discord.Interaction, name: str):
-        result = await db.npcs.delete_one({"name": name, "is_world_boss": True})
-        
-        if result.deleted_count > 0:
-            await interaction.response.send_message(f"🗑️ **{name}** has been erased from existence.")
-        else:
-            await interaction.response.send_message(f"❓ Could not find a World Boss named `{name}`.")
-
-# --- THE MISSING PART THAT WAS CAUSING YOUR ERROR ---
 async def setup(bot):
     await bot.add_cog(WorldBossAdminCog(bot))
-  
+    
