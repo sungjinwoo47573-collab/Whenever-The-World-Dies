@@ -1,73 +1,73 @@
 import discord
 
 class JJKEmbeds:
-    """Standardized UI components for the JJK RPG."""
-
-    @staticmethod
-    def success(title, description):
-        """A clean blue-themed embed for successful actions."""
-        return discord.Embed(
-            title=f"🌀 {title}",
-            description=description,
-            color=discord.Color.blue()
-        )
-
-    @staticmethod
-    def error(description):
-        """A red-themed embed for errors or failed requirements."""
-        return discord.Embed(
-            title="⚠️ Access Denied",
-            description=description,
-            color=discord.Color.red()
-        )
-
-    @staticmethod
-    def combat_log(player_name, target_name, action, damage, is_black_flash=False):
-        """The UI for every !CE, !F, and !W command."""
-        # Black Flash gets a special pitch-black aesthetic
-        color = 0x000000 if is_black_flash else 0xFF0000
-        title = "✨ BLACK FLASH!" if is_black_flash else "⚔️ Combat Action"
-        
-        embed = discord.Embed(title=title, color=color)
-        embed.add_field(name="Sorcerer", value=player_name, inline=True)
-        embed.add_field(name="Target", value=target_name, inline=True)
-        embed.add_field(name="Technique", value=f"**{action}**", inline=False)
-        
-        dmg_val = f"**{damage:,}**"
-        if is_black_flash:
-            dmg_val = f"💥 `{dmg_val}`"
-            
-        embed.add_field(name="Result", value=f"{dmg_val} Damage Dealt", inline=True)
-        return embed
-
     @staticmethod
     def profile(data):
-        """The /profile UI showing player stats and Grade."""
-        embed = discord.Embed(
-            title=f"⛩️ Sorcerer Registry: {data['name']}",
-            description=f"**Current Rank:** `{data['grade']}`",
-            color=0x4B0082 # Dark Purple
+        """Standardized UI for /profile showing Stats, XP, Grade, and Money."""
+        embed = discord.Embed(title=f"⛩️ Sorcerer Registry: {data['name']}", color=0x2f3136)
+        
+        # Stats Formatting
+        stats = data['stats']
+        stats_str = (
+            f"❤️ **HP:** {stats['hp']}/{stats['max_hp']}\n"
+            f"🧪 **CE:** {stats['ce']}/{stats['max_ce']}\n"
+            f"💥 **DMG:** {stats['dmg']}"
         )
         
-        stats = data['stats']
-        embed.add_field(name="Level", value=f"📊 {data['level']}", inline=True)
-        embed.add_field(name="Balance", value=f"¥ {data['money']:,}", inline=True)
+        # Progress Formatting
+        lvl = data['level']
+        xp = data['xp']
+        xp_needed = lvl * 150
         
-        hp_bar = f"{stats['hp']}/{stats['max_hp']}"
-        ce_bar = f"{stats['ce']}/{stats['max_ce']}"
+        embed.add_field(name="📊 Statistics", value=stats_str, inline=True)
+        embed.add_field(name="📜 Status", value=f"**Grade:** {data['grade']}\n**Level:** {lvl}\n**XP:** {xp}/{xp_needed}", inline=True)
+        embed.add_field(name="💰 Currency", value=f"**Yen:** ¥{data.get('money', 0):,}", inline=False)
         
-        embed.add_field(name="Status", value=(
-            f"❤️ **HP:** `{hp_bar}`\n"
-            f"💠 **CE:** `{ce_bar}`\n"
-            f"💥 **ATK:** `{stats['dmg']}`"
-        ), inline=False)
-        
-        loadout = data['loadout']
-        embed.add_field(name="Current Loadout", value=(
-            f"📜 **Tech:** {loadout['technique'] or 'None'}\n"
-            f"🥊 **Style:** {loadout['style']}\n"
-            f"🗡️ **Weapon:** {loadout['weapon'] or 'None'}"
-        ), inline=False)
+        # Equipment/Loadout
+        loadout = data.get('loadout', {})
+        equip_str = (
+            f"🌀 **Tech:** {loadout.get('technique', 'None')}\n"
+            f"⚔️ **Weapon:** {loadout.get('weapon', 'None')}\n"
+            f"👊 **Style:** {loadout.get('fighting_style', 'None')}"
+        )
+        embed.add_field(name="🎒 Equipped", value=equip_str, inline=False)
         
         return embed
-      
+
+    @staticmethod
+    def combat_log(player_name, target_name, action, damage, is_black_flash=False, effect=None):
+        """Visual feedback for !CE, !F, !W inputs."""
+        color = 0xff0000 if is_black_flash else 0x7289da
+        title = "✨ BLACK FLASH! ✨" if is_black_flash else "⚔️ Combat Action"
+        
+        embed = discord.Embed(title=title, color=color)
+        desc = f"**{player_name}** used **{action}** on **{target_name}**!"
+        
+        if is_black_flash:
+            desc += f"\n# 💥 {damage:,} CRITICAL DMG"
+        else:
+            desc += f"\n**Damage:** {damage}"
+            
+        if effect:
+            desc += f"\n*{effect}*"
+            
+        embed.description = desc
+        return embed
+
+    @staticmethod
+    def raid_announcement(name, boss_name, img_url):
+        """UI for /RaidCreate and /NpCspawnchannel."""
+        embed = discord.Embed(title=f"🚨 RAID ALERT: {name}", description=f"The veil has dropped. **{boss_name}** has appeared!", color=0x992d22)
+        if img_url:
+            embed.set_image(url=img_url)
+        embed.add_field(name="Join Command", value=f"`/RaidJoin {name}`", inline=False)
+        return embed
+
+    @staticmethod
+    def success(title, msg):
+        return discord.Embed(title=f"✅ {title}", description=msg, color=discord.Color.green())
+
+    @staticmethod
+    def error(msg):
+        return discord.Embed(title="❌ Error", description=msg, color=discord.Color.red())
+        
