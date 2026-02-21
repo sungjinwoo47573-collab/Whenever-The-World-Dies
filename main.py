@@ -1,19 +1,16 @@
 import discord
+from discord.ext import commands
 import os
 import asyncio
-from discord.ext import commands
 from dotenv import load_dotenv
+from database.connection import db
 
-# Load variables from .env
 load_dotenv()
 
 class JJKBot(commands.Bot):
     def __init__(self):
-        # Intents are required for reading messages (!CE commands) and managing roles
-        intents = discord.Intents.default()
-        intents.message_content = True 
-        intents.members = True          
-        
+        # Setting up both Prefixes (!CE, !F, !W) and Slash Commands
+        intents = discord.Intents.all()
         super().__init__(
             command_prefix="!", 
             intents=intents,
@@ -21,29 +18,49 @@ class JJKBot(commands.Bot):
         )
 
     async def setup_hook(self):
-        """This runs before the bot starts to load all feature modules."""
-        print("--- Initializing Jujutsu Systems ---")
+        """Initializes database and loads all command modules (Cogs)."""
+        print("--- ⛩️ Initializing Jujutsu System ---")
         
-        # Automatically load all .py files from the /cogs folder
-        for filename in os.listdir('./cogs'):
-            if filename.endswith('.py') and not filename.startswith('__'):
+        # Folder for commands
+        cog_folder = "./cogs"
+        if not os.path.exists(cog_folder):
+            os.makedirs(cog_folder)
+
+        # Loading Cog files
+        for filename in os.listdir(cog_folder):
+            if filename.endswith(".py") and filename != "__init__.py":
                 try:
-                    await self.load_extension(f'cogs.{filename[:-3]}')
+                    await self.load_extension(f"cogs.{filename[:-3]}")
                     print(f"✅ Loaded: {filename}")
                 except Exception as e:
-                    print(f"❌ Error loading {filename}: {e}")
-        
-        # Syncing Slash Commands (/) to Discord
+                    print(f"❌ Failed to load {filename}: {e}")
+
+        # Syncing Slash Commands
         await self.tree.sync()
-        print("⚡ Slash Commands Synchronized")
+        print("--- 🌀 Domain Expansion Complete (Bot Ready) ---")
 
     async def on_ready(self):
-        print(f"🔥 Logged in as: {self.user.name}")
-        print(f"🆔 ID: {self.user.id}")
-        print("--- Sorcerer Database Connected ---")
+        await self.change_presence(
+            activity=discord.Game(name="Jujutsu Kaisen RPG | /start")
+        )
+        print(f"Logged in as {self.user} (ID: {self.user.id})")
 
+bot = JJKBot()
+
+# --- Global Logic for Combat/Messages ---
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    # 1. Leveling from Messages
+    from systems.progression import add_xp
+    await add_xp(message.guild, message.author.id, 5) # 5 XP per message
+
+    # 2. Process Commands (!CE, !F, !W)
+    await bot.process_commands(message)
+
+# Run the Bot
 if __name__ == "__main__":
-    bot = JJKBot()
-    # Pulls token from the .env file
     bot.run(os.getenv("DISCORD_TOKEN"))
-  
+    
