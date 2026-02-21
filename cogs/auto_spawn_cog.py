@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 class AutoSpawnCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_attack_time = {} # Track last attack per boss/channel
+        self.last_attack_time = {}
+        self.active_boss_msg = None  # Stores the Discord Message object
         self.spawn_loop.start()
 
     def cog_unload(self):
@@ -16,7 +17,7 @@ class AutoSpawnCog(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def spawn_loop(self):
-        """Manifests a World Boss and monitors for inactivity."""
+        """Manifests a World Boss and cleans up old announcement messages."""
         config = await db.db["settings"].find_one({"setting": "wb_channel"})
         if not config:
             return
@@ -26,6 +27,14 @@ class AutoSpawnCog(commands.Cog):
         if not channel:
             return
 
+        # --- NEW: Cleanup Previous Message ---
+        if self.active_boss_msg:
+            try:
+                await self.active_boss_msg.delete()
+            except Exception as e:
+                print(f"Cleanup failed (msg probably already deleted): {e}")
+            self.active_boss_msg = None
+
         wb_pool = await db.npcs.find({"is_world_boss": True}).to_list(length=100)
         if not wb_pool:
             return
@@ -33,7 +42,6 @@ class AutoSpawnCog(commands.Cog):
         boss = random.choice(wb_pool)
         boss_name = boss['name']
         
-        # Reset Boss HP and set initial activity time
         await db.npcs.update_one({"name": boss_name}, {"$set": {"current_hp": boss["max_hp"]}})
         self.last_attack_time[boss_name] = datetime.utcnow()
 
@@ -44,52 +52,52 @@ class AutoSpawnCog(commands.Cog):
         )
         if "image" in boss:
             embed.set_image(url=boss["image"])
-        await channel.send(embed=embed)
+        
+        # Store the new message so we can delete it later
+        self.active_boss_msg = await channel.send(content="@here **A NEW THREAT APPEARS!**", embed=embed)
 
-        # Start the specialized monitoring loop
         asyncio.create_task(self.monitor_boss_activity(channel, boss_name))
 
     async def monitor_boss_activity(self, channel, boss_name):
-        """Checks every 30 seconds if the boss has been ignored."""
+        """Checks if the boss has been ignored and despawns if necessary."""
         wb_cog = self.bot.get_cog("WorldBossCog")
-        
-        # Start the attack loop
         attack_task = asyncio.create_task(wb_cog.world_boss_attack_loop(channel, boss_name))
 
         while True:
-            await asyncio.sleep(30) # Check frequency
+            await asyncio.sleep(30)
             
-            # Check if boss is dead
             boss_data = await db.npcs.find_one({"name": boss_name})
+            
+            # If boss is defeated by players
             if not boss_data or boss_data['current_hp'] <= 0:
+                if self.active_boss_msg:
+                    try: await self.active_boss_msg.delete()
+                    except: pass
+                    self.active_boss_msg = None
                 break
 
-            # Calculate idle time
+            # If boss is ignored for 4 minutes
             idle_duration = datetime.utcnow() - self.last_attack_time.get(boss_name, datetime.utcnow())
-            
             if idle_duration > timedelta(minutes=4):
-                # Despawn Logic
-                attack_task.cancel() # Stop the boss from hitting players
+                attack_task.cancel()
                 await db.npcs.update_one({"name": boss_name}, {"$set": {"current_hp": 0}})
                 
-                despawn_embed = discord.Embed(
-                    title="💨 BOSS DESPAWNED",
-                    description=f"**{boss_name}** grew bored of your cowardice and vanished into the shadows.",
-                    color=0x333333
-                )
-                await channel.send(embed=despawn_embed)
+                # Delete boss message on despawn
+                if self.active_boss_msg:
+                    try: await self.active_boss_msg.delete()
+                    except: pass
+                    self.active_boss_msg = None
+                
+                await channel.send(f"💨 **{boss_name}** vanished due to inactivity.", delete_after=10)
                 break
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        """Updates the activity timer whenever a player uses a combat command."""
+        """Resets the idle timer when someone uses a combat command."""
         if message.author.bot:
             return
-            
-        # If the player uses any of your combat prefixes
         if any(message.content.startswith(p) for p in ["!CE", "!W", "!F", "!Domain"]):
-            # For simplicity, we update the timer for all active bosses in that channel
-            for boss_name in self.last_attack_time:
+            for boss_name in list(self.last_attack_time.keys()):
                 self.last_attack_time[boss_name] = datetime.utcnow()
 
     @spawn_loop.before_loop
