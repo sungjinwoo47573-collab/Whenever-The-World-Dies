@@ -1,66 +1,62 @@
 import discord
 from discord.ext import commands
 import os
-import asyncio
 from dotenv import load_dotenv
-from database.connection import db
 
 load_dotenv()
 
 class JJKBot(commands.Bot):
     def __init__(self):
-        # Setting up both Prefixes (!CE, !F, !W) and Slash Commands
+        # Intents must be set to ALL to read message content for !CE/!F/!W commands
         intents = discord.Intents.all()
         super().__init__(
             command_prefix="!", 
             intents=intents,
-            help_command=None
+            help_command=None # Disabling default help to use our custom HelpCog
         )
 
     async def setup_hook(self):
-        """Initializes database and loads all command modules (Cogs)."""
+        """Loads all Cogs and syncs Slash commands."""
         print("--- ⛩️ Initializing Jujutsu System ---")
         
-        # Folder for commands
-        cog_folder = "./cogs"
-        if not os.path.exists(cog_folder):
-            os.makedirs(cog_folder)
-
-        # Loading Cog files
-        for filename in os.listdir(cog_folder):
-            if filename.endswith(".py") and filename != "__init__.py":
+        # This loop finds every file in /cogs and loads it automatically
+        for filename in os.listdir("./cogs"):
+            if filename.endswith(".py"):
                 try:
                     await self.load_extension(f"cogs.{filename[:-3]}")
                     print(f"✅ Loaded: {filename}")
                 except Exception as e:
                     print(f"❌ Failed to load {filename}: {e}")
 
-        # Syncing Slash Commands
+        # This syncs the slash commands to Discord's API
+        # Note: Your Railway logs showed a 429 error; this is normal for large syncs.
         await self.tree.sync()
-        print("--- 🌀 Domain Expansion Complete (Bot Ready) ---")
+        print("--- 🌀 Domain Expansion Complete ---")
 
     async def on_ready(self):
         await self.change_presence(
-            activity=discord.Game(name="Jujutsu Kaisen RPG | /start")
+            activity=discord.Game(name="JJK RPG | /start")
         )
         print(f"Logged in as {self.user} (ID: {self.user.id})")
 
 bot = JJKBot()
 
-# --- Global Logic for Combat/Messages ---
+# --- Critical: Process Prefix Commands ---
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # 1. Leveling from Messages
-    from systems.progression import add_xp
-    await add_xp(message.guild, message.author.id, 5) # 5 XP per message
+    # Leveling from Messages (Logic from progression.py)
+    try:
+        from systems.progression import add_xp
+        await add_xp(message.guild, message.author.id, 5)
+    except:
+        pass
 
-    # 2. Process Commands (!CE, !F, !W)
+    # This line is REQUIRED to make !CE1, !F1, etc. work!
     await bot.process_commands(message)
 
-# Run the Bot
 if __name__ == "__main__":
     bot.run(os.getenv("DISCORD_TOKEN"))
     
