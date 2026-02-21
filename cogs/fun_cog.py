@@ -7,54 +7,54 @@ class FunCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="addmoney", description="Give Yen to a specific sorcerer.")
-    @app_commands.describe(user="The user to receive money", amount="Amount of Yen to add")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def add_money(self, interaction: discord.Interaction, user: discord.User, amount: int):
-        user_id = str(user.id)
-        
-        result = await db.players.update_one(
-            {"_id": user_id},
-            {"$inc": {"money": amount}}
-        )
+    def get_grade_from_level(self, level):
+        """Helper to determine grade based on level."""
+        if level >= 80: return "Special Grade Sorcerer"
+        if level >= 60: return "Grade 1 Sorcerer"
+        if level >= 40: return "Grade 2 Sorcerer"
+        if level >= 20: return "Grade 3 Sorcerer"
+        return "Grade 4 Sorcerer"
 
-        if result.matched_count > 0:
-            await interaction.response.send_message(f"💰 Deposited **¥{amount:,}** into {user.mention}'s account.")
-        else:
-            await interaction.response.send_message(f"❌ User {user.name} hasn't started their journey yet.", ephemeral=True)
-
-    @app_commands.command(name="setlevel", description="Adjust a sorcerer's level.")
-    @app_commands.describe(user="The user to level up", level="The new level to set")
+    @app_commands.command(name="setlevel", description="Set level and automatically update Grade and Stat Points.")
+    @app_commands.describe(user="The user to modify", level="The target level")
     @app_commands.checks.has_permissions(administrator=True)
     async def set_level(self, interaction: discord.Interaction, user: discord.User, level: int):
         user_id = str(user.id)
         
-        result = await db.players.update_one(
-            {"_id": user_id},
-            {"$set": {"level": level}}
-        )
-
-        if result.matched_count > 0:
-            await interaction.response.send_message(f"🆙 {user.mention} has been set to **Level {level}**.")
-        else:
-            await interaction.response.send_message(f"❌ User {user.name} not found in database.", ephemeral=True)
-
-    @app_commands.command(name="addrerolls", description="Give clan rerolls to a user.")
-    @app_commands.describe(user="The user to receive rerolls", amount="Number of rerolls")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def add_rerolls(self, interaction: discord.Interaction, user: discord.User, amount: int):
-        user_id = str(user.id)
+        # Calculate points (5 per level-up) and rank
+        new_total_points = (level - 1) * 5
+        new_grade = self.get_grade_from_level(level)
         
-        result = await db.players.update_one(
+        await db.players.update_one(
             {"_id": user_id},
-            {"$inc": {"clan_rerolls": amount}}
+            {
+                "$set": {
+                    "level": level,
+                    "stat_points": new_total_points,
+                    "grade": new_grade,
+                    "xp": 0
+                }
+            }
         )
 
-        if result.matched_count > 0:
-            await interaction.response.send_message(f"🧬 Granted **{amount}** Clan Rerolls to {user.mention}.")
-        else:
-            await interaction.response.send_message(f"❌ User {user.name} not found.", ephemeral=True)
+        embed = discord.Embed(
+            title="🛠️ Admin Adjustment",
+            description=f"Successfully updated {user.mention}.",
+            color=0x2ecc71
+        )
+        embed.add_field(name="Level", value=f"`{level}`", inline=True)
+        embed.add_field(name="Grade", value=f"`{new_grade}`", inline=True)
+        embed.add_field(name="Points Granted", value=f"`{new_total_points}`", inline=True)
+
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="addmoney", description="Give Yen to a specific sorcerer.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def add_money(self, interaction: discord.Interaction, user: discord.User, amount: int):
+        user_id = str(user.id)
+        await db.players.update_one({"_id": user_id}, {"$inc": {"money": amount}})
+        await interaction.response.send_message(f"💰 Deposited **¥{amount:,}** for {user.mention}.")
 
 async def setup(bot):
     await bot.add_cog(FunCog(bot))
-          
+    
