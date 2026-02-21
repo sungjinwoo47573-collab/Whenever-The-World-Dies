@@ -1,127 +1,109 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
 from database.connection import db
 import asyncio
 import random
+from datetime import datetime
 from utils.banner_manager import BannerManager
 
 class WorldBossCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Dictionary to track damage per boss session: {user_id: damage_dealt}
-        self.damage_tracker = {}
 
-    def generate_hp_bar(self, current, max_val, length=10, is_player=False):
-        """Generates a high-quality health bar for both Boss and Players."""
-        percentage = max(0, min(1, current / max_val))
-        filled = int(percentage * length)
+    def get_hp_visuals(self, current, max_hp):
+        """Generates the 3-Phase colored health bar."""
+        perc = (current / max_hp) * 100
+        filled = max(0, min(10, int(perc / 10)))
         
-        if is_player:
-            # Player bar is blue/white for clarity
-            bar = "🟦" * filled + "⬜" * (length - filled)
-        else:
-            # Boss bar uses phase colors (handled in the command)
-            bar = "▰" * filled + "▱" * (length - filled)
+        if perc > 65: bar, color, label = "🟩" * filled, 0x00FF00, "PHASE 1: INITIAL"
+        elif perc > 30: bar, color, label = "🟧" * filled, 0xFFA500, "PHASE 2: ENRAGED"
+        else: bar, color, label = "🟥" * filled, 0xFF0000, "PHASE 3: UNLEASHED"
         
-        return f"{bar} `{current:,}/{max_val:,} ({percentage:.1%})`"
+        return f"{bar}{'⬛' * (10-filled)} `{perc:.1f}%`", color, label
 
-    @app_commands.command(name="attack", description="Engage the active World Boss.")
-    async def attack(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        
-        # 1. FETCH DATA
+    async def execute_attack(self, ctx, category, move_num):
+        """Player Attack: Stats + Skill Damage with CE Cost Check."""
+        user_id = str(ctx.author.id)
         player = await db.players.find_one({"_id": user_id})
         boss = await db.npcs.find_one({"is_world_boss": True, "current_hp": {"$gt": 0}})
 
-        if not player:
-            return await interaction.response.send_message("❌ No profile found. Use `/start`.", ephemeral=True)
-        if not boss:
-            return await interaction.response.send_message("🌑 The area is quiet. No World Boss active.", ephemeral=True)
+        if not player: return await ctx.send("❌ Create a profile first!")
+        if not boss: return await ctx.send("🌑 No active World Boss.")
+
+        # 1. CE COST CHECK (Only for !CE commands)
+        if category == "CE":
+            ce_cost = move_num * 15 # Example: !CE 5 costs 75 CE
+            current_ce = player.get("stats", {}).get("current_ce", 0)
+            if current_ce < ce_cost:
+                return await ctx.send(f"⚠️ Not enough Cursed Energy! (Need {ce_cost})")
+            # Deduct CE
+            await db.players.update_one({"_id": user_id}, {"$inc": {"stats.current_ce": -ce_cost}})
 
         # 2. DAMAGE CALCULATION
-        p_stats = player.get("stats", {})
-        p_hp = p_stats.get("current_hp", 100)
-        p_max_hp = p_stats.get("max_hp", 100)
+        skill_key = f"{category}{move_num}"
+        skill_data = await db.skills.find_one({"skill_id": skill_key})
+        skill_dmg = skill_data.get("damage", 0) if skill_data else 0
+        player_dmg = player.get("stats", {}).get("dmg", 10)
         
-        if p_hp <= 0:
-            return await interaction.response.send_message("💀 You are incapacitated! You cannot attack until you heal.", ephemeral=True)
+        total_dmg = player_dmg + skill_dmg
 
-        base_dmg = p_stats.get("dmg", 10)
-        actual_dmg = int(base_dmg * random.uniform(0.85, 1.25)) # Critical hit variance
+        # 3. UPDATE DB & UI
+        new_hp = max(0, boss["current_hp"] - total_dmg)
+        await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_hp}})
         
-        # 3. UPDATE DATABASE (Boss HP & Damage Tracker)
-        new_boss_hp = max(0, boss["current_hp"] - actual_dmg)
-        await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_boss_hp}})
-        
-        # Track damage for rewards
-        self.damage_tracker[user_id] = self.damage_tracker.get(user_id, 0) + actual_dmg
-
-        # 4. PHASE & HP BAR VISUALS
-        hp_bar, phase_color, phase_label = self.generate_boss_visuals(new_boss_hp, boss["max_hp"])
-        player_bar = self.generate_hp_bar(p_hp, p_max_hp, length=8, is_player=True)
-
-        # 5. COMBAT EMBED
+        hp_bar, color, label = self.get_hp_visuals(new_hp, boss["max_hp"])
         embed = discord.Embed(
-            title=f"⚔️ STRIKE: {boss['name']}",
-            description=f"**{interaction.user.name}** dealt **{actual_dmg:,}** damage!",
-            color=phase_color
+            title=f"⚔️ ATTACK: {boss['name']}",
+            description=f"**{ctx.author.name}** used **{skill_key}** dealing `{total_dmg:,}` damage!",
+            color=color
         )
-        
-        embed.add_field(name="👺 Boss Status", value=f"{phase_label}\n{hp_bar}", inline=False)
-        embed.add_field(name="👤 Your Vitality", value=player_bar, inline=False)
-
-        if "image" in boss:
-            embed.set_thumbnail(url=boss["image"])
-            
+        embed.add_field(name="Boss Health", value=hp_bar, inline=False)
         BannerManager.apply(embed, type="combat")
+        await ctx.send(embed=embed)
 
-        # 6. VICTORY CHECK
-        if new_boss_hp <= 0:
-            await self.handle_victory(interaction, boss)
-        else:
-            await interaction.response.send_message(embed=embed)
+    # --- PREFIX COMMANDS ---
+    @commands.command(name="CE")
+    async def ce_cmd(self, ctx, m: int = 1): await self.execute_attack(ctx, "CE", m)
+    @commands.command(name="F")
+    async def f_cmd(self, ctx, m: int = 1): await self.execute_attack(ctx, "F", m)
+    @commands.command(name="W")
+    async def w_cmd(self, ctx, m: int = 1): await self.execute_attack(ctx, "W", m)
 
-    def generate_boss_visuals(self, current, max_hp):
-        """Internal helper for boss phase styling."""
-        percentage = (current / max_hp) * 100
-        if percentage > 65:
-            return self.generate_hp_bar(current, max_hp), 0x00FF00, "PHASE 1: STABLE"
-        elif percentage > 30:
-            return self.generate_hp_bar(current, max_hp), 0xFFA500, "PHASE 2: ENRAGED"
-        else:
-            return self.generate_hp_bar(current, max_hp), 0xFF0000, "PHASE 3: CRITICAL"
+    # --- BOSS AOE LOOP ---
+    async def world_boss_attack_loop(self, channel, boss_name):
+        """The Boss uses its registered skills to attack everyone."""
+        while True:
+            boss = await db.npcs.find_one({"name": boss_name})
+            if not boss or boss.get("current_hp", 0) <= 0:
+                break
 
-    async def handle_victory(self, interaction, boss):
-        """Logic for the Top 3 Damage Rewards Table."""
-        # Sort tracker: [(user_id, total_dmg), ...]
-        sorted_damagers = sorted(self.damage_tracker.items(), key=lambda x: x[1], reverse=True)
-        top_3 = sorted_damagers[:3]
+            # 1. SELECT RANDOM BOSS SKILL
+            # Pulls from the !wb_skills data you set
+            skills = [boss.get("technique"), boss.get("weapon"), boss.get("fighting_style")]
+            active_skill = random.choice([s for s in skills if s]) or "Cursed Strike"
 
-        victory_embed = discord.Embed(
-            title="🎊 SPECIAL GRADE EXORCISED",
-            description=f"The veil lifts as **{boss['name']}** dissipates into cursed energy.",
-            color=0x2ecc71
-        )
+            # 2. CALCULATE AOE DAMAGE
+            perc = (boss['current_hp'] / boss['max_hp']) * 100
+            mult = 1.3 if perc > 65 else 2.6 if perc > 30 else 3.9
+            final_dmg = int(boss.get("base_dmg", 100) * mult)
 
-        leaderboard_text = ""
-        for i, (u_id, dmg) in enumerate(top_3, 1):
-            member = interaction.guild.get_member(int(u_id))
-            name = member.name if member else "Unknown Sorcerer"
-            
-            # Bonus Yen logic (1st: 10k, 2nd: 5k, 3rd: 2.5k)
-            bonus = 10000 // (2**(i-1))
-            leaderboard_text += f"**#{i} {name}**: `{dmg:,}` dmg (+¥{bonus:,})\n"
-            
-            # Apply rewards to DB
-            await db.players.update_one({"_id": u_id}, {"$inc": {"money": bonus, "xp": 1000}})
+            hp_bar, color, label = self.get_hp_visuals(boss['current_hp'], boss['max_hp'])
 
-        victory_embed.add_field(name="🏆 Top Damage Dealers", value=leaderboard_text or "No data", inline=False)
-        BannerManager.apply(victory_embed, type="main")
-        
-        # Reset tracker for next boss
-        self.damage_tracker = {}
-        await interaction.response.send_message(embed=victory_embed)
+            embed = discord.Embed(
+                title=f"🚨 {boss_name} ACTIVATES {active_skill.upper()}",
+                description=f"**{label}**\nThe boss unleashes a devastating move on everyone for `{final_dmg:,}` damage!",
+                color=color
+            )
+            if "image" in boss: embed.set_thumbnail(url=boss["image"])
+            BannerManager.apply(embed, type="combat")
+            await channel.send(embed=embed)
+
+            # 3. APPLY DAMAGE TO ALL TARGETS
+            await db.players.update_many(
+                {"stats.current_hp": {"$gt": 0}},
+                {"$inc": {"stats.current_hp": -final_dmg}}
+            )
+            await asyncio.sleep(20)
 
 async def setup(bot):
     await bot.add_cog(WorldBossCog(bot))
