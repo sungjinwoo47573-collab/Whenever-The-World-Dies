@@ -1,6 +1,6 @@
 class BannerManager:
     # Replace these with your Canva-designed banners
-    MAIN_BANNER = "https://image2url.com/r2/default/images/1771684435258-e5e311e9-ce22-42fc-a0ef-93eb78ed4745.png"
+    MAIN_BANNER = "https://image2url.com/r2/default/images/1771684587824-05c296aa-d67d-4cdc-be90-43b8d6a297b6.png"
     COMBAT_BANNER = "https://i.imgur.com/your_combat_banner.png"
     ADMIN_BANNER = "https://i.imgur.com/your_admin_banner.png"
 
