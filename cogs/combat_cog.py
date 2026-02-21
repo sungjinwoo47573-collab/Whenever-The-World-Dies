@@ -1,9 +1,10 @@
 import discord
 from discord.ext import commands
 from database.connection import db
-from systems.combat import active_combats, check_black_flash, apply_black_flash, npc_auto_attack_loop
+from systems.combat import active_combats, get_black_flash, apply_effect, npc_ai_loop
 from utils.embeds import JJKEmbeds
-import asyncio
+from utils.checks import handle_fatality
+import random
 
 class CombatCog(commands.Cog):
     def __init__(self, bot):
@@ -11,80 +12,103 @@ class CombatCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Ignore bots and messages without our prefixes
-        if message.author.bot or not any(message.content.startswith(p) for p in ["!CE", "!F", "!W"]):
+        if message.author.bot or not message.content.startswith("!"):
             return
 
+        content = message.content.upper()
+        user_id = str(message.author.id)
         channel_id = message.channel.id
-        # Only process if there is an active NPC in this channel
+
+        # Check if combat is active in this channel
         if channel_id not in active_combats:
             return
 
-        user_id = str(message.author.id)
-        content = message.content.upper()
-        
-        # 1. Fetch Player and NPC data
+        combat = active_combats[channel_id]
         player = await db.players.find_one({"_id": user_id})
-        combat_data = active_combats[channel_id]
-        npc = combat_data["npc"]
+        if not player: return
 
-        if not player:
-            return await message.reply("❌ You haven't started your journey! Use `/start` first.")
+        prefix = ""
+        slot = ""
+        category = ""
 
-        # 2. Determine Action and Base Damage
-        action_name = "Basic Strike"
-        base_dmg = player["stats"]["dmg"]
-
+        # Parse Prefix: !CE1-5, !F1-3, !W1-4
         if content.startswith("!CE"):
-            action_name = "Cursed Technique" # In full version, map to player's tech name
-            base_dmg *= 1.5 # Techniques deal 50% more dmg
+            prefix, category = "!CE", "technique"
+            slot = content.replace("!CE", "")
+        elif content.startswith("!F"):
+            prefix, category = "!F", "fighting_style"
+            slot = content.replace("!F", "")
         elif content.startswith("!W"):
-            action_name = "Weapon Art"
-            base_dmg *= 1.2
+            prefix, category = "!W", "weapon"
+            slot = content.replace("!W", "")
+        elif content == "!DOMAIN":
+            return await self.handle_domain(message, player, combat)
+        else:
+            return
 
-        # 3. BLACK FLASH LOGIC (2.5% Chance)
-        is_black_flash = await check_black_flash()
-        final_dmg = apply_black_flash(base_dmg) if is_black_flash else base_dmg
-        
-        # Apply 12s Entropy/Variance (from NPC perspective, it affects player output slightly too)
-        final_dmg = int(final_dmg * combat_data.get("variance", 1.0))
+        # 1. Get the equipped item/tech name
+        equipped_item = player["loadout"].get(category)
+        if not equipped_item:
+            return await message.reply(f"❌ You don't have a {category} equipped!")
 
-        # 4. UPDATE COMBAT STATE (Aggro & NPC HP)
-        # Add damage to player's aggro score
-        current_aggro = combat_data["players"].get(user_id, 0)
-        active_combats[channel_id]["players"][user_id] = current_aggro + final_dmg
+        # 2. Find the skill name mapped to that slot
+        source_data = None
+        if category == "technique":
+            source_data = await db.techniques.find_one({"name": equipped_item})
+        elif category == "weapon":
+            source_data = await db.items.find_one({"name": equipped_item})
+        elif category == "fighting_style":
+            source_data = await db.fighting_styles.find_one({"name": equipped_item})
+
+        if not source_data or slot not in source_data.get("skills", {}):
+            return await message.reply(f"❌ Skill slot {slot} is empty for {equipped_item}.")
+
+        skill_name = source_data["skills"][slot]
         
-        # Subtract HP from NPC
+        # 3. Fetch Skill Stats (DMG & Effects) from Skills Library
+        skill_stats = await db.db["skills_library"].find_one({"name": skill_name})
+        if not skill_stats:
+            return await message.reply(f"❌ Skill data for **{skill_name}** not found in Library.")
+
+        # 4. Calculation: Base + Player DMG Stat + Variance
+        base_dmg = skill_stats["damage"]
+        variance = combat.get("variance", 1.0)
+        total_dmg = int((base_dmg + player["stats"]["dmg"]) * variance)
+
+        # 5. Black Flash Check
+        final_dmg, is_bf = get_black_flash(total_dmg)
+
+        # 6. Apply Effects (Burn, Drain, etc.)
+        effect_msg = await apply_effect("npc", channel_id, user_id, skill_stats.get("effect"), final_dmg)
+
+        # 7. Update NPC HP and Player Aggro
+        npc = combat["npc"]
         npc["hp"] -= final_dmg
+        active_combats[channel_id]["players"][user_id] = active_combats[channel_id]["players"].get(user_id, 0) + final_dmg
 
-        # 5. UI RESPONSE
-        embed = JJKEmbeds.combat_log(
-            player_name=message.author.display_name,
-            target_name=npc["name"],
-            action=action_name,
-            damage=final_dmg,
-            is_black_flash=is_black_flash
-        )
+        # UI Response
+        embed = JJKEmbeds.combat_log(player["name"], npc["name"], skill_name, final_dmg, is_bf, effect_msg)
         await message.channel.send(embed=embed)
 
-        # 6. TRIGGER NPC RETALIATION
-        # If the NPC isn't already attacking, start the AI loop
-        if not combat_data.get("ai_active"):
-            active_combats[channel_id]["ai_active"] = True
-            self.bot.loop.create_task(npc_auto_attack_loop(message, npc))
-
-        # 7. WIN CONDITION
+        # 8. Check if NPC is dead
         if npc["hp"] <= 0:
             from systems.economy import distribute_rewards
+            rewards = await distribute_rewards(message, channel_id, npc)
+            active_combats.pop(channel_id)
             await message.channel.send(f"🎊 **{npc['name']}** has been exorcised!")
-            await distribute_rewards(message, channel_id, npc)
+            # Send reward summary here...
 
-    @commands.command(name="Domain")
-    async def domain_expansion(self, ctx):
-        """The ultimate move. Buffs stats and changes the channel visual."""
-        await ctx.send(f"🤞 **DOMAIN EXPANSION!** {ctx.author.mention} has trapped the Curse in their inner world!")
-        # Logic for stat buffs and CE burnout would go here
+    async def handle_domain(self, message, player, combat):
+        tech_name = player["loadout"].get("technique")
+        tech_data = await db.techniques.find_one({"name": tech_name})
+        
+        if not tech_data or not tech_data.get("domain"):
+            return await message.reply("❌ Your technique does not possess a Domain Expansion.")
+
+        domain = tech_data["domain"]
+        # Apply Buffs temporarily (Logic would track this in active_combats)
+        await message.channel.send(f"🤞 **DOMAIN EXPANSION: {domain['name']}**\n{player['name']} receives massive stat buffs!")
 
 async def setup(bot):
     await bot.add_cog(CombatCog(bot))
-  
+    
