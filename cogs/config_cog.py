@@ -42,30 +42,39 @@ class ConfigCog(commands.Cog):
 
     @app_commands.command(name="stats_reset", description="Sorcerer: Reset your attributes to base levels to re-allocate Stat Points.")
     async def stats_reset(self, interaction: discord.Interaction):
-        """Allows players to refund all spent points. Use a cost check if needed."""
+        """Allows players to refund all spent points while maintaining Clan buffs."""
         user_id = str(interaction.user.id)
         player = await db.players.find_one({"_id": user_id})
 
         if not player:
             return await interaction.response.send_message("❌ No profile found.", ephemeral=True)
 
-        # Logic: Calculate total points the player should have based on their current level
-        # Level 1 starts with 5, every level up adds 5. Total = Level * 5
+        # 1. Calculate points based on level (Level * 5)
         level = player.get("level", 1)
         total_points = level * 5
         
-        # Reset to Base Stats (Grade 4 basics)
-        # Note: We keep Clan Buffs separate in the actual logic, 
-        # but this resets the points spent manually.
+        # 2. Re-apply Clan Buffs to the baseline so they aren't lost on reset
+        clan_name = player.get("clan", "None")
+        clan_data = await db.clans.find_one({"name": clan_name})
+        
+        clan_hp = clan_data.get("hp_buff", 0) if clan_data else 0
+        clan_ce = clan_data.get("ce_buff", 0) if clan_data else 0
+        clan_dmg = clan_data.get("dmg_buff", 0) if clan_data else 0
+
+        # 3. Baseline stats (Grade 4) + Clan inheritance
+        base_hp = 500 + clan_hp
+        base_ce = 100 + clan_ce
+        base_dmg = 20 + clan_dmg
+
         await db.players.update_one(
             {"_id": user_id},
             {
                 "$set": {
-                    "stats.max_hp": 500,
-                    "stats.current_hp": 500,
-                    "stats.max_ce": 100,
-                    "stats.current_ce": 100,
-                    "stats.dmg": 20,
+                    "stats.hp": base_hp,
+                    "stats.current_hp": base_hp,
+                    "stats.ce": base_ce,
+                    "stats.cur_ce": base_ce,
+                    "stats.dmg": base_dmg,
                     "stat_points": total_points
                 }
             }
@@ -76,7 +85,7 @@ class ConfigCog(commands.Cog):
             description=(
                 "You have performed a Binding Vow to reset your attributes.\n\n"
                 f"**Points Refunded:** `{total_points}` SP\n"
-                "**Status:** All attributes returned to Grade 4 baseline."
+                "**Status:** Attributes returned to baseline (Clan buffs preserved)."
             ),
             color=0xe67e22
         )
