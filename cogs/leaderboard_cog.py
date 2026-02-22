@@ -15,7 +15,8 @@ class LeaderboardCog(commands.Cog):
     ])
     async def leaderboard(self, interaction: discord.Interaction, category: str):
         """Displays the top 10 sorcerers in the specified category."""
-        await interaction.response.defer() # Preventing timeout for DB query
+        # Deferring is crucial for database queries to prevent interaction expiration
+        await interaction.response.defer() 
         
         # Mapping for visual flair
         crowns = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -30,7 +31,8 @@ class LeaderboardCog(commands.Cog):
             description = ""
             for i, p in enumerate(players, 1):
                 icon = crowns.get(i, f"`#{i}`")
-                description += f"{icon} **{p['name']}** — ¥{p.get('money', 0):,}\n"
+                money = p.get('money', 0)
+                description += f"{icon} **{p.get('name', 'Unknown')}** — ¥{money:,}\n"
 
         else:
             # Sort by Level (Power) descending
@@ -42,8 +44,9 @@ class LeaderboardCog(commands.Cog):
             description = ""
             for i, p in enumerate(players, 1):
                 icon = crowns.get(i, f"`#{i}`")
+                level = p.get('level', 1)
                 grade = p.get('grade', 'Grade 4')
-                description += f"{icon} **{p['name']}** (Lvl {p.get('level', 1)}) — `{grade}`\n"
+                description += f"{icon} **{p.get('name', 'Unknown')}** (Lvl {level}) — `{grade}`\n"
 
         embed = discord.Embed(
             title=title,
@@ -58,4 +61,4 @@ class LeaderboardCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(LeaderboardCog(bot))
-    
+                
