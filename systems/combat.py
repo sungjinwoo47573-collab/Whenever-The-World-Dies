@@ -7,81 +7,103 @@ active_combats = {}
 
 async def apply_effect(target_type, channel_id, user_id, effect_name, base_dmg):
     """
-    Handles granular skill effects: Burn, Drain, Bleed, Stun.
+    Handles granular skill effects. 
+    Synchronized with the rebuilt Player and NPC models.
     """
     if not effect_name:
         return ""
 
-    if effect_name.lower() == "burn":
-        # Extra 10% dmg over 3 seconds (simplified for bot speed)
-        return "🔥 The target is scorched!"
+    effect_name = effect_name.lower()
+
+    if effect_name == "burn":
+        # Visual indicator for a damage-over-time effect
+        return "🔥 The target's cursed energy is combusting!"
     
-    elif effect_name.lower() == "drain":
-        # Heal player for 15% of damage dealt
-        heal = int(base_dmg * 0.15)
-        await db.players.update_one({"_id": user_id}, {"$inc": {"stats.hp": heal}})
-        return f"💉 Drained {heal} HP!"
+    elif effect_name == "drain":
+        # Heal player for 15% of damage dealt, capped by Max HP
+        player = await db.players.find_one({"_id": user_id})
+        if player:
+            heal_amount = int(base_dmg * 0.15)
+            new_hp = min(player['stats']['max_hp'], player['stats']['current_hp'] + heal_amount)
+            await db.players.update_one({"_id": user_id}, {"$set": {"stats.current_hp": new_hp}})
+            return f"💉 **Drain:** Absorbed `{heal_amount}` HP!"
     
-    elif effect_name.lower() == "bleed":
-        return "🩸 Internal bleeding applied!"
+    elif effect_name == "bleed":
+        return "🩸 **Hemorrhage:** The target is losing stability!"
     
     return ""
 
 async def combat_variance_loop(channel_id):
-    """The 12-13 second variance logic (1-3% shift)."""
+    """
+    The 'Breathing' System: Shits damage variance every 12-13 seconds.
+    This creates the 'highs and lows' of a real battle.
+    """
     while channel_id in active_combats:
         await asyncio.sleep(random.uniform(12, 13))
         if channel_id in active_combats:
-            # Shift variance between 0.97 and 1.03
-            active_combats[channel_id]["variance"] = random.uniform(0.97, 1.03)
+            # Shift variance between 0.95 and 1.05 (5% fluctuation)
+            active_combats[channel_id]["variance"] = random.uniform(0.95, 1.05)
+
+def get_black_flash(damage):
+    """
+    The spark of black does not choose who to bless.
+    Calculates a 2.5% chance for a massive critical hit.
+    """
+    if random.random() < 0.025: # 2.5% Chance
+        # Using a 2.5x multiplier for consistent RPG balancing
+        return int(damage * 2.5), True
+    return damage, False
 
 async def npc_ai_loop(ctx, npc_data):
     """
-    Automated Boss AI. Uses moveset (Tech, Weapon, Style) 
-    and targets based on Aggro.
+    Automated Boss AI. 
+    Logic: Targets the player with the highest Aggro (most damage dealt).
     """
     channel_id = ctx.channel.id
     active_combats[channel_id] = {
         "npc": npc_data,
-        "players": {},
+        "players": {}, # Stores {user_id: total_damage_dealt}
         "variance": 1.0,
         "ai_active": True
     }
 
-    # Start the 12s variance background task
+    # Start the background task for damage variance
     asyncio.create_task(combat_variance_loop(channel_id))
 
     while channel_id in active_combats:
-        wait = 5 if npc_data.get("is_boss") else 8
-        await asyncio.sleep(wait)
+        # Bosses act every 5 seconds, regular NPCs every 8
+        wait_time = 5 if npc_data.get("is_world_boss") else 8
+        await asyncio.sleep(wait_time)
 
         combat = active_combats.get(channel_id)
         if not combat or not combat["players"]:
             continue
 
-        # AGGRO: Target player with highest damage
+        # AGGRO SYSTEM: Find the player who has dealt the most damage
         target_id = max(combat["players"], key=combat["players"].get)
-        target_member = ctx.guild.get_member(int(target_id))
         
-        if not target_member:
-            continue
-
-        # AI MOVE SELECTION
-        # Randomly picks between Tech, Weapon, or Style assigned via /BossMoves
-        move_type = random.choice(["tech", "weapon", "style"])
-        move_name = npc_data["moveset"].get(move_type) or "Basic Strike"
+        # Select Move
+        move_type = random.choice(["technique", "weapon", "fighting_style"])
+        move_name = npc_data.get(move_type) or "Basic Cursed Strike"
         
-        # Damage + Variance
-        dmg = int(npc_data["base_dmg"] * combat["variance"])
+        # Apply Variance to Boss Damage
+        variance = combat.get("variance", 1.0)
+        final_dmg = int(npc_data.get("base_dmg", 50) * variance)
         
-        await ctx.send(f"💢 **{npc_data['name']}** uses **{move_name}** on <@{target_id}> for **{dmg}** DMG!")
+        # Update Player HP in Database
+        await db.players.update_one(
+            {"_id": str(target_id)},
+            {"$inc": {"stats.current_hp": -final_dmg}}
+        )
 
-        # FATALITY CHECK: If player dies, kick from channel (Set Permissions)
-        # (This is handled in the listener to keep this loop clean)
+        await ctx.send(
+            f"💢 **{npc_data['name']}** focuses their malice on <@{target_id}>!\n"
+            f"They use **{move_name}** for **{final_dmg}** damage!"
+        )
 
-def get_black_flash(damage):
-    """Black Flash Math: Damage ^ 2.5"""
-    if random.random() < 0.025: # 2.5% chance
-        return int(damage ** 2.5), True
-    return damage, False
-    
+        # Check if NPC is dead (handled in main listener, but loop cleanup is here)
+        current_npc = await db.npcs.find_one({"_id": npc_data["_id"]})
+        if not current_npc or current_npc.get("current_hp", 0) <= 0:
+            active_combats.pop(channel_id, None)
+            break
+        
