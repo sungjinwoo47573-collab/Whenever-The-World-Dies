@@ -36,7 +36,7 @@ class FunCog(commands.Cog):
         new_max_hp = 500 + (level * 10)
         new_max_ce = 100 + (level * 10)
         
-        # 3. Database Update: Set level and SYNC current vitals to new maxes
+        # 3. Database Update: Synchronized keys (hp, ce, cur_ce, current_hp)
         await db.players.update_one(
             {"_id": user_id},
             {
@@ -45,10 +45,10 @@ class FunCog(commands.Cog):
                     "stat_points": stat_points,
                     "grade": new_grade,
                     "xp": 0,
-                    "stats.max_hp": new_max_hp,
-                    "stats.current_hp": new_max_hp, # Full Heal
-                    "stats.max_ce": new_max_ce,
-                    "stats.current_ce": new_max_ce  # Full Recharge
+                    "stats.hp": new_max_hp,         # Max HP Key
+                    "stats.current_hp": new_max_hp, # Pool Key
+                    "stats.ce": new_max_ce,         # Max CE Key
+                    "stats.cur_ce": new_max_ce      # Pool Key
                 }
             }
         )
@@ -88,4 +88,4 @@ class FunCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(FunCog(bot))
-    
+        
