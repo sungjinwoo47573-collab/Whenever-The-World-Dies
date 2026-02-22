@@ -2,56 +2,93 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.banner_manager import BannerManager
 import random
 
 class ClanCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="roll_clan", description="Reroll your lineage. (Warning: Replaces current clan buffs)")
+    def get_clan_color(self, chance):
+        """Assigns a visual tier based on how hard the clan is to roll."""
+        if chance <= 0.01: return 0xe74c3c # Special Grade (Red)
+        if chance <= 0.05: return 0xf1c40f # Legendary (Gold)
+        if chance <= 0.15: return 0x9b59b6 # Epic (Purple)
+        return 0x3498db # Common/Rare (Blue)
+
+    @app_commands.command(name="roll_clan", description="Reroll your lineage to inherit powerful clan buffs.")
     async def roll_clan(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         player = await db.players.find_one({"_id": user_id})
 
-        if not player or player.get("clan_rerolls", 0) <= 0:
-            return await interaction.response.send_message("❌ No rerolls available!", ephemeral=True)
+        if not player:
+            return await interaction.response.send_message("❌ You must `/start` your journey first.", ephemeral=True)
+
+        if player.get("clan_rerolls", 0) <= 0:
+            return await interaction.response.send_message("❌ You have no Rerolls left! Check for `/codes` or the shop.", ephemeral=True)
 
         all_clans = await db.clans.find().to_list(length=100)
         if not all_clans:
-            return await interaction.response.send_message("❌ No clans exist in the database.")
+            return await interaction.response.send_message("❌ The lineage records are empty (No clans in DB).", ephemeral=True)
 
-        # 1. Weighted Roll
-        weights = [c['roll_chance'] for c in all_clans]
+        # 1. Weighted Roll Logic
+        weights = [c.get('roll_chance', 0.1) for c in all_clans]
         chosen_clan = random.choices(all_clans, weights=weights, k=1)[0]
         
-        # 2. Get OLD clan buffs to subtract them (prevent infinite stacking)
+        # 2. Buff Calculation (Normalization)
         old_clan_name = player.get("clan", "None")
         old_clan = await db.clans.find_one({"name": old_clan_name})
-        old_buffs = old_clan.get("buffs", {"hp": 0, "ce": 0, "dmg": 0}) if old_clan else {"hp": 0, "ce": 0, "dmg": 0}
+        
+        # We handle buffs as flat values from the clan doc
+        old_hp = old_clan.get("hp_buff", 0) if old_clan else 0
+        old_ce = old_clan.get("ce_buff", 0) if old_clan else 0
+        old_dmg = old_clan.get("dmg_buff", 0) if old_clan else 0
 
-        # 3. Get NEW buffs
-        new_buffs = chosen_clan.get("buffs", {"hp": 0, "ce": 0, "dmg": 0})
+        new_hp = chosen_clan.get("hp_buff", 0)
+        new_ce = chosen_clan.get("ce_buff", 0)
+        new_dmg = chosen_clan.get("dmg_buff", 0)
 
-        # 4. Atomic Update: Remove old, Add new, Deduct reroll
+        # 3. Atomic Update: Swap buffs and deduct reroll
         await db.players.update_one(
             {"_id": user_id},
             {
                 "$set": {"clan": chosen_clan['name']},
                 "$inc": {
                     "clan_rerolls": -1,
-                    # Subtract old buffs, add new ones
-                    "stats.max_hp": new_buffs['hp'] - old_buffs['hp'],
-                    "stats.max_ce": new_buffs['ce'] - old_buffs['ce'],
-                    "stats.dmg": new_buffs['dmg'] - old_buffs['dmg']
+                    "stats.max_hp": new_hp - old_hp,
+                    "stats.max_ce": new_ce - old_ce,
+                    "stats.dmg": new_dmg - old_dmg,
+                    # Ensure current HP/CE scales up with the new max
+                    "stats.current_hp": new_hp - old_hp,
+                    "stats.current_ce": new_ce - old_ce
                 }
             }
         )
 
-        embed = discord.Embed(title="🧬 Lineage Roll", color=0x7289da, 
-                              description=f"You are now a member of the **{chosen_clan['name']}** clan!")
-        embed.add_field(name="New Stats", value=f"❤️ HP: +{new_buffs['hp']}\n🧪 CE: +{new_buffs['ce']}\n💥 DMG: +{new_buffs['dmg']}")
+        # 4. High-Quality Presentation
+        chance_percent = chosen_clan.get('roll_chance', 0) * 100
+        embed = discord.Embed(
+            title="🧬 LINEAGE MANIFESTED", 
+            description=f"Your blood awakens. You have joined the **{chosen_clan['name']}** Clan!",
+            color=self.get_clan_color(chosen_clan.get('roll_chance', 1))
+        )
+        
+        embed.add_field(
+            name="📊 Inheritance Buffs", 
+            value=f"❤️ **HP:** `+{new_hp}`\n🧪 **CE:** `+{new_ce}`\n💥 **DMG:** `+{new_dmg}`",
+            inline=True
+        )
+        embed.add_field(
+            name="🍀 Rarity", 
+            value=f"**{chance_percent}%** chance",
+            inline=True
+        )
+
+        embed.set_footer(text=f"Rerolls remaining: {player.get('clan_rerolls', 1) - 1}")
+        BannerManager.apply(embed, type="main")
+        
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(ClanCog(bot))
-    
+        
