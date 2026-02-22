@@ -62,7 +62,7 @@ class WorldBossAdminCog(commands.Cog):
         boss_data = {
             "name": name, 
             "max_hp": hp, 
-            "current_hp": 0, # Stays 0 until /wb_start is called
+            "current_hp": 0,
             "base_dmg": base_dmg, 
             "image": image_url, 
             "is_world_boss": True, 
@@ -90,6 +90,38 @@ class WorldBossAdminCog(commands.Cog):
         )
         await interaction.response.send_message(f"⚔️ **{name}** is now armed with `{technique}`, `{weapon}`, and `{style}`.")
 
+    # --- NEW COOLDOWN COMMAND ---
+
+    @app_commands.command(name="wb_cooldown", description="Admin: Set cooldowns for a skill set (Move 1-4).")
+    @app_commands.describe(
+        name="The name of the Technique/Weapon/Style",
+        m1="Cooldown for Move 1 (seconds)",
+        m2="Cooldown for Move 2 (seconds)",
+        m3="Cooldown for Move 3 (seconds)",
+        m4="Cooldown for Move 4 (seconds)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def wb_cooldown(self, interaction: discord.Interaction, name: str, m1: int, m2: int, m3: int, m4: int):
+        """Updates the cooldown values for all 4 moves of a specific skill in the database."""
+        cds = [m1, m2, m3, m4]
+        
+        for i, cd in enumerate(cds, 1):
+            await db.skills.update_one(
+                {"name": name, "move_number": i},
+                {"$set": {"cooldown": cd}}
+            )
+
+        embed = discord.Embed(
+            title="⏳ COOLDOWN REGISTRY UPDATED",
+            description=f"Standardized cooldowns applied to **{name}**.",
+            color=0x34495e
+        )
+        for i, cd in enumerate(cds, 1):
+            embed.add_field(name=f"Move {i}", value=f"`{cd}s`", inline=True)
+        
+        BannerManager.apply(embed, type="admin")
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="wb_list", description="Admin: View all registered World Bosses.")
     @app_commands.checks.has_permissions(administrator=True)
     async def wb_list(self, interaction: discord.Interaction):
@@ -110,9 +142,6 @@ class WorldBossAdminCog(commands.Cog):
             )
         BannerManager.apply(embed, type="admin")
         await interaction.response.send_message(embed=embed)
-
-    # NOTE: /wb_start is REMOVED from this cog. 
-    # Use the cinematic /wb_start in WorldBossCog instead.
 
     @app_commands.command(name="wb_ping", description="Admin: Ping the notification role in the raid channel.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -142,4 +171,4 @@ class WorldBossAdminCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossAdminCog(bot))
-        
+    
