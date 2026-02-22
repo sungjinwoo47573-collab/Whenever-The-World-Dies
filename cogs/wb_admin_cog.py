@@ -92,7 +92,7 @@ class WorldBossAdminCog(commands.Cog):
         
         embed = discord.Embed(
             title="👾 ENTITY REGISTERED",
-            description=f"**{name}** added to database.\n**HP:** `{hp:,}`",
+            description=f"**{name}** added to database.\n**HP:** `{hp:,}`\n**Rarity:** `{rarity}`",
             color=self.boss_rarities.get(rarity, 0x2f3136)
         )
         BannerManager.apply(embed, type="admin")
@@ -116,48 +116,43 @@ class WorldBossAdminCog(commands.Cog):
             return await interaction.response.send_message("❌ No bosses in database.", ephemeral=True)
         
         selected_boss = random.choice(all_bosses)
+        
+        # Reset boss status for fresh encounter
         await db.npcs.update_one(
             {"_id": selected_boss["_id"]},
             {"$set": {"current_hp": selected_boss["max_hp"], "phase": 1, "domain_count": 0, "is_domain_active": False}}
         )
 
+        # Get ping role if configured
+        role_data = await db.db["settings"].find_one({"setting": "wb_role"})
+        ping_content = f"<@&{role_data['role_id']}>" if role_data else ""
+
         embed = discord.Embed(
             title=f"🚨 EMERGENCY MANIFESTATION: {selected_boss['name'].upper()}",
             description=f"The veil has been forcibly torn! **{selected_boss['name']}** has appeared!",
-            color=0xff0000
+            color=self.boss_rarities.get(selected_boss.get('rarity'), 0xff0000)
         )
         if selected_boss.get("image"): embed.set_image(url=selected_boss["image"])
-        BannerManager.apply(embed, type="main")
+        BannerManager.apply(embed, type="combat")
 
         for channel_id in config_chans["channel_ids"]:
             channel = self.bot.get_channel(channel_id)
-            if channel: await channel.send(embed=embed)
+            if channel: await channel.send(content=ping_content, embed=embed)
 
         await interaction.response.send_message(f"✅ Spawned **{selected_boss['name']}**.", ephemeral=True)
 
     @app_commands.command(name="wb_despawn", description="Admin: Remove the current active World Boss.")
     @app_commands.checks.has_permissions(administrator=True)
     async def wb_despawn(self, interaction: discord.Interaction):
-        """Forcefully sets current boss HP to 0 to end the raid."""
-        result = await db.npcs.update_many({"is_world_boss": True}, {"$set": {"current_hp": 0, "is_domain_active": False}})
+        """Forcefully sets current boss HP to 0 and resets raid logic."""
+        await db.npcs.update_many({"is_world_boss": True}, {"$set": {"current_hp": 0, "is_domain_active": False}})
         
-        # Clear the aggro list in the WorldBossCog if possible
         wb_cog = self.bot.get_cog("WorldBossCog")
         if wb_cog:
-            wb_cog.aggro_list.clear()
-            wb_cog.is_boss_frozen = False
+            if hasattr(wb_cog, 'aggro_list'): wb_cog.aggro_list.clear()
+            if hasattr(wb_cog, 'is_boss_frozen'): wb_cog.is_boss_frozen = False
 
-        await interaction.response.send_message(f"🧹 Raid cleared. {result.modified_count} entities returned to the shadows.")
-
-    @app_commands.command(name="wbdomainset", description="Admin: Set Domain stats (Dmg/MaxUse) for a boss.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def wbdomainset(self, interaction: discord.Interaction, name: str, dmg: int, maxuse: int = 1):
-        """Customizes the Domain Expansion parameters for a specific boss."""
-        await db.npcs.update_one(
-            {"name": name, "is_world_boss": True},
-            {"$set": {"domain_dmg": dmg, "domain_max": maxuse}}
-        )
-        await interaction.response.send_message(f"✅ Domain set for **{name}**.")
+        await interaction.response.send_message("🧹 Raid cleared. All active entities returned to the shadows.")
 
     @app_commands.command(name="wb_list", description="Admin: View all registered World Bosses.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -168,10 +163,14 @@ class WorldBossAdminCog(commands.Cog):
         embed = discord.Embed(title="📖 WORLD BOSS LIST", color=0x2b2d31)
         for boss in bosses:
             status = "🔴 LIVE" if boss.get("current_hp", 0) > 0 else "⚪ DORMANT"
-            embed.add_field(name=boss['name'], value=f"Status: {status}\nHP: `{boss['max_hp']:,}`", inline=True)
+            embed.add_field(
+                name=boss['name'], 
+                value=f"**Status:** {status}\n**HP:** `{boss['max_hp']:,}`\n**Rarity:** `{boss.get('rarity', 'Common')}`", 
+                inline=True
+            )
         BannerManager.apply(embed, type="admin")
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(WorldBossAdminCog(bot))
-        
+                          
