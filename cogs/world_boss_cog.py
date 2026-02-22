@@ -233,5 +233,5 @@ class WorldBossCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossCog(bot))
-    dBossCog(bot))
+    
     
