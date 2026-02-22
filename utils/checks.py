@@ -24,6 +24,7 @@ def has_profile():
 def not_in_combat():
     """Prevents inventory, stat, or clan changes during active channel combat."""
     async def predicate(interaction: discord.Interaction) -> bool:
+        # Import inside function to avoid circular import issues
         from systems.combat import active_combats
         if interaction.channel_id in active_combats:
             await interaction.response.send_message(
@@ -37,10 +38,10 @@ def not_in_combat():
 async def handle_fatality(member: discord.Member, channel: discord.TextChannel):
     """
     The 'Permanent Loss' logic. When a player's HP hits 0, they are 
-    expelled from the channel to simulate being knocked out or killed.
+    temporarily removed from the channel to simulate being incapacitated.
     """
     try:
-        # Override permissions to remove the player from the combat channel
+        # Reset permissions for the member in this specific channel
         await channel.set_permissions(member, overwrite=None)
         
         embed = discord.Embed(
@@ -57,7 +58,7 @@ async def handle_fatality(member: discord.Member, channel: discord.TextChannel):
         try:
             await member.send(embed=embed)
         except discord.Forbidden:
-            # If DMs are closed, we don't want the bot to crash
+            # Silently fail if player has DMs disabled
             pass
             
         return True
@@ -68,13 +69,13 @@ async def handle_fatality(member: discord.Member, channel: discord.TextChannel):
 async def check_binding_vow(user_id, vow_name):
     """
     Checks if a player has a specific Binding Vow active.
-    Binding Vows are permanent or temporary buffs with heavy costs.
+    Binding Vows act as passive modifiers in the player document.
     """
     player = await db.players.find_one({"_id": str(user_id)})
     if not player: 
         return False
     
-    # Binding Vows are stored as a list of strings in the player document
+    # Check the 'binding_vows' list within the player data
     vows = player.get("binding_vows", [])
     return vow_name in vows
-        
+    
