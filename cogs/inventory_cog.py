@@ -26,13 +26,30 @@ class InventoryCog(commands.Cog):
         )
 
         if not inventory_list:
-            embed.description = "🛡️ *Your inventory is empty. Purchase techniques in the shop or claim victory over bosses to fill your arsenal.*"
+            embed.description = "🛡️ *Your inventory is empty. Purchase techniques in the shop or claim victory over bosses.*"
         else:
-            # Categorizing for "Crazy Good Quality" feel
-            # In a real scenario, you'd fetch item types from DB, 
-            # but here we'll display the list cleanly.
-            items_str = "\n".join([f"• **{item}**" for item in inventory_list])
-            embed.add_field(name="📜 OWNED ASSETS", value=items_str, inline=False)
+            # Categorization Logic: Fetching from respective collections to sort the view
+            techs = []
+            weapons = []
+            styles = []
+
+            for item in inventory_list:
+                # Check Techniques
+                if await db.techniques.find_one({"name": item}):
+                    techs.append(item)
+                # Check Weapons
+                elif await db.items.find_one({"name": item, "is_weapon": True}):
+                    weapons.append(item)
+                # Check Styles
+                elif await db.fighting_styles.find_one({"name": item}):
+                    styles.append(item)
+                else:
+                    # Accessories or unmapped items
+                    weapons.append(f"{item} (Misc)")
+
+            if techs: embed.add_field(name="🌀 TECHNIQUES", value="\n".join([f"• {t}" for t in techs]), inline=True)
+            if styles: embed.add_field(name="👊 STYLES", value="\n".join([f"• {s}" for s in styles]), inline=True)
+            if weapons: embed.add_field(name="⚔️ TOOLS", value="\n".join([f"• {w}" for w in weapons]), inline=True)
 
         # Show active loadout prominently
         current_loadout = (
@@ -61,13 +78,12 @@ class InventoryCog(commands.Cog):
 
         inventory = player.get("inventory", [])
         
-        # Validation: Check if the player actually owns the item
-        # We use a case-insensitive check to be user-friendly
+        # Validation: Case-insensitive ownership check
         owned_item = next((i for i in inventory if i.lower() == item_name.lower()), None)
 
         if not owned_item:
             return await interaction.response.send_message(
-                f"❌ You do not own **{item_name}**. Check your `/inventory` for available options.", 
+                f"❌ You do not own **{item_name}**. Check your `/inventory`.", 
                 ephemeral=True
             )
 
