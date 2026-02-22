@@ -1,4 +1,17 @@
+# Discord API Wrapper
 discord.py
+
+# Asynchronous MongoDB Driver
 motor
-dnspython
+
+# MongoDB low-level driver
+pymongo
+
+# Image Processing for UI/Embeds (if needed for dynamic banners)
+Pillow
+
+# Asynchronous operations
+asyncio
+
+# Environment variable management
 python-dotenv
