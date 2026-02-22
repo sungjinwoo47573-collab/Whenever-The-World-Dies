@@ -37,6 +37,7 @@ class SkillsCog(commands.Cog):
         )
         
         # 2. Update any active moves in the combat 'skills' collection using this title
+        # This ensures currently equipped items reflect the new damage/rarity
         await db.skills.update_many(
             {"move_title": name},
             {"$set": {"damage": damage, "rarity": rarity}}
@@ -129,4 +130,4 @@ class SkillsCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(SkillsCog(bot))
-                          
+    
