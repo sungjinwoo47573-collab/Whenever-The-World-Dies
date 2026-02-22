@@ -25,7 +25,7 @@ class WorldBossCog(commands.Cog):
     def cog_unload(self):
         self.auto_spawn_loop.cancel()
 
-    # --- AUTO SPAWN LOOP (Every 10 Minutes) ---
+    # --- AUTO SPAWN LOOP ---
 
     @tasks.loop(minutes=10)
     async def auto_spawn_loop(self):
@@ -60,9 +60,9 @@ class WorldBossCog(commands.Cog):
                 f"**Global HP:** `{selected_boss['max_hp']:,}`\n"
                 f"**Raid Capacity:** `{self.MAX_RAIDERS}` per sector.\n\n"
                 "**BATTLE PROTOCOL:**\n"
-                "• All damage is synced across all channels.\n"
-                "• Use `!domain` to freeze the boss (2 mins).\n"
-                "• Domain triggers at 10% HP (Expect Debuffs)."
+                "• All damage is synced globally.\n"
+                "• `!domain` freezes boss (100 CE).\n"
+                "• HP < 10% = Boss Domain Expansion."
             ),
             color=0xff0000
         )
@@ -78,66 +78,7 @@ class WorldBossCog(commands.Cog):
     async def before_spawn(self):
         await self.bot.wait_until_ready()
 
-    # --- COMBAT UTILITIES ---
-
-    async def handle_player_death(self, ctx, member: discord.Member):
-        user_id = str(member.id)
-        if user_id in self.aggro_list:
-            self.aggro_list.remove(user_id)
-        
-        self.revenge_meter[user_id] = self.revenge_meter.get(user_id, 0) + 1
-        
-        try:
-            await ctx.channel.set_permissions(member, send_messages=False)
-            await ctx.send(f"💀 **{member.mention} has fallen!** Slot opened. (10s Lockout)")
-            await asyncio.sleep(10)
-            await ctx.channel.set_permissions(member, overwrite=None)
-            await db.players.update_one({"_id": user_id}, {"$set": {"stats.current_hp": 100}})
-            await ctx.send(f"❤️ **{member.mention}** returned.", delete_after=5)
-        except: pass
-
-    async def trigger_domain(self, ctx, boss):
-        if boss.get("domain_count", 0) >= boss.get("domain_max", 1):
-            return
-
-        await ctx.send(f"🌌 **{boss['name']} expands its Domain!**")
-        
-        targets = list(self.aggro_list)
-        dmg = boss.get("domain_dmg", 500)
-        for uid in targets:
-            member = ctx.guild.get_member(int(uid))
-            if member:
-                await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
-                p = await db.players.find_one({"_id": uid})
-                if p['stats']['current_hp'] <= 0:
-                    self.bot.loop.create_task(self.handle_player_death(ctx, member))
-
-        self.aggro_list.clear()
-        await db.npcs.update_one(
-            {"_id": boss["_id"]}, 
-            {"$inc": {"domain_count": 1}, "$set": {"is_domain_active": True}}
-        )
-        await ctx.send("📉 **TERRITORY PRESSURE:** Players now deal less damage and have slower cooldowns!")
-
-    async def boss_retaliation(self, ctx, boss):
-        if not self.aggro_list or self.is_boss_frozen: return
-        phase_mult = 2.5 if boss.get("phase", 1) == 2 else 1.0
-        
-        targets = list(self.aggro_list)
-        for uid in targets:
-            member = ctx.guild.get_member(int(uid))
-            if not member: continue
-            
-            dmg = int(boss.get("base_dmg", 100) * phase_mult * random.uniform(0.9, 1.1))
-            await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
-            p_data = await db.players.find_one({"_id": uid})
-            
-            if p_data.get("stats", {}).get("current_hp", 0) <= 0:
-                self.bot.loop.create_task(self.handle_player_death(ctx, member))
-
-        await ctx.send(f"💢 **{boss['name']}** retaliates against the raid party!")
-
-    # --- PLAYER DOMAIN ---
+    # --- PLAYER DOMAIN & CLASH LOGIC ---
 
     @commands.command(name="domain")
     async def player_domain(self, ctx):
@@ -146,38 +87,43 @@ class WorldBossCog(commands.Cog):
         boss = await db.npcs.find_one({"is_world_boss": True, "current_hp": {"$gt": 0}})
 
         if not player or not boss:
-            return await ctx.send("❌ No World Boss to target.")
+            return await ctx.send("❌ No target found.")
 
         if player.get("stats", {}).get("cur_ce", 0) < 100:
-            return await ctx.send("❌ Insufficient Cursed Energy (100 required).")
+            return await ctx.send("❌ Insufficient CE (100 required).")
 
         if self.is_boss_frozen:
-            return await ctx.send("⚠️ A Domain is already active!")
+            return await ctx.send("⚠️ Territory is already occupied!")
 
-        # Activate
+        # Setup
         self.is_boss_frozen = True
         self.domain_owner = user_id
-        duration = 120 # 2 minutes
-        self.frozen_until = datetime.utcnow() + timedelta(seconds=duration)
+        total_duration = 120 # 2 minutes
+        self.frozen_until = datetime.utcnow() + timedelta(seconds=total_duration)
         await db.players.update_one({"_id": user_id}, {"$inc": {"stats.cur_ce": -100}})
 
-        await ctx.send(f"🌀 **DOMAIN EXPANSION!** {ctx.author.name} has frozen **{boss['name']}** for 2 minutes!")
+        await ctx.send(f"🌀 **DOMAIN EXPANSION!** {ctx.author.name} has trapped **{boss['name']}**!")
 
-        # Domain Clash/Freeze Loop
+        # Countdown & Clash Loop
         elapsed = 0
-        while elapsed < duration and self.is_boss_frozen:
+        while elapsed < total_duration and self.is_boss_frozen:
             await asyncio.sleep(10)
             elapsed += 10
-            # 15% chance for Boss to attempt a Clash and break out
+            
+            # 30-Second Status Update
+            if elapsed % 30 == 0 and elapsed < total_duration:
+                remaining = total_duration - elapsed
+                await ctx.send(f"⏳ **Domain Stability:** {remaining}s remaining... (Boss is struggling!)", delete_after=5)
+
+            # 15% Clash Chance
             if random.random() < 0.15:
                 self.is_boss_frozen = False
-                await ctx.send(f"💥 **DOMAIN CLASH!** {boss['name']} has shattered the player's domain early!")
-                return
+                return await ctx.send(f"💥 **DOMAIN CLASH!** {boss['name']} shattered the barrier!")
 
         self.is_boss_frozen = False
-        await ctx.send(f"🧊 **{boss['name']}** is no longer frozen.")
+        await ctx.send(f"🧊 **{boss['name']}** is free from the Domain.")
 
-    # --- MAIN ATTACK LOGIC ---
+    # --- COMBAT ENGINE ---
 
     async def execute_attack(self, ctx, category, move_num):
         user_id = str(ctx.author.id)
@@ -188,12 +134,12 @@ class WorldBossCog(commands.Cog):
 
         if user_id not in self.aggro_list:
             if len(self.aggro_list) >= self.MAX_RAIDERS:
-                return await ctx.send(f"🚫 Raid Full!", delete_after=5)
+                return await ctx.send("🚫 Raid Full!", delete_after=5)
             self.aggro_list.add(user_id)
 
         if player['stats']['current_hp'] <= 0: return
 
-        # Penalties (Disabled if boss is frozen by player domain)
+        # Debuffs
         penalty = 0
         if boss.get("is_domain_active") and not self.is_boss_frozen:
             penalty = random.uniform(0.07, 0.12)
@@ -203,13 +149,13 @@ class WorldBossCog(commands.Cog):
         skill = await db.skills.find_one({"name": item_name, "move_number": move_num})
         if not skill: return
 
+        # Cooldown
         cd_key = f"{user_id}_{item_name}_{move_num}"
         if cd_key in self.cooldowns and datetime.utcnow() < self.cooldowns[cd_key]:
             return await ctx.send("⏳ Cooldown!", delete_after=1)
-        
         self.cooldowns[cd_key] = datetime.utcnow() + timedelta(seconds=skill.get("cooldown", 3) * (1+penalty))
 
-        # Damage
+        # Damage calculation
         dmg_calc = (player['stats']['dmg'] + skill.get("damage", 0)) * random.uniform(0.95, 1.05) * (1-penalty)
         if self.revenge_meter.get(user_id, 0) >= 3:
             final_dmg = int(dmg_calc * 2.5)
@@ -220,7 +166,8 @@ class WorldBossCog(commands.Cog):
 
         new_hp = max(0, boss['current_hp'] - final_dmg)
         await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_hp}})
-        await ctx.send(f"⚔️ **{ctx.author.name}** deals `{final_dmg:,}` damage!")
+        
+        await ctx.send(f"⚔️ **{ctx.author.name}** deals `{final_dmg:,}` DMG!")
 
         if new_hp <= 0:
             self.is_boss_frozen = False
@@ -235,7 +182,47 @@ class WorldBossCog(commands.Cog):
                     await asyncio.sleep(1)
                     await self.boss_retaliation(ctx, boss)
             else:
-                await ctx.send("❄️ Boss is frozen and cannot counter.", delete_after=2)
+                await ctx.send("❄️ Boss is paralyzed!", delete_after=2)
+
+    async def trigger_domain(self, ctx, boss):
+        if boss.get("domain_count", 0) >= boss.get("domain_max", 1): return
+        await ctx.send(f"🌌 **{boss['name']} expands its Domain!**")
+        
+        targets = list(self.aggro_list)
+        dmg = boss.get("domain_dmg", 500)
+        for uid in targets:
+            member = ctx.guild.get_member(int(uid))
+            if member:
+                await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
+                p = await db.players.find_one({"_id": uid})
+                if p['stats']['current_hp'] <= 0: self.bot.loop.create_task(self.handle_player_death(ctx, member))
+
+        self.aggro_list.clear()
+        await db.npcs.update_one({"_id": boss["_id"]}, {"$inc": {"domain_count": 1}, "$set": {"is_domain_active": True}})
+
+    async def boss_retaliation(self, ctx, boss):
+        if not self.aggro_list or self.is_boss_frozen: return
+        targets = list(self.aggro_list)
+        for uid in targets:
+            member = ctx.guild.get_member(int(uid))
+            if member:
+                dmg = int(boss.get("base_dmg", 100) * random.uniform(0.9, 1.1))
+                await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
+                p = await db.players.find_one({"_id": uid})
+                if p['stats']['current_hp'] <= 0: self.bot.loop.create_task(self.handle_player_death(ctx, member))
+        await ctx.send(f"💢 **{boss['name']}** strikes back!")
+
+    async def handle_player_death(self, ctx, member):
+        uid = str(member.id)
+        if uid in self.aggro_list: self.aggro_list.remove(uid)
+        self.revenge_meter[uid] = self.revenge_meter.get(uid, 0) + 1
+        try:
+            await ctx.channel.set_permissions(member, send_messages=False)
+            await ctx.send(f"💀 **{member.mention}** soul-locked (10s).")
+            await asyncio.sleep(10)
+            await ctx.channel.set_permissions(member, overwrite=None)
+            await db.players.update_one({"_id": uid}, {"$set": {"stats.current_hp": 100}})
+        except: pass
 
     @commands.command(name="CE")
     async def ce(self, ctx, m: int = 1): await self.execute_attack(ctx, "CE", m)
@@ -246,4 +233,5 @@ class WorldBossCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossCog(bot))
-        
+    dBossCog(bot))
+    
