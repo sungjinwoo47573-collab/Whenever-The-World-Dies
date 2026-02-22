@@ -22,13 +22,7 @@ class MasteryAdminCog(commands.Cog):
         Mastery is stored as mastery.ItemName to track individual proficiency.
         """
         user_id = str(user.id)
-        player = await db.players.find_one({"_id": user_id})
-
-        if not player:
-            return await interaction.response.send_message("❌ This sorcerer does not have a profile.", ephemeral=True)
-
-        # Update the specific mastery field for the item name
-        # Using $set to overwrite or create the specific entry in the mastery object
+        # Directly update the mastery object inside the player document
         await db.players.update_one(
             {"_id": user_id},
             {"$set": {f"mastery.{name}": amount}}
@@ -42,13 +36,14 @@ class MasteryAdminCog(commands.Cog):
         embed.add_field(name="Subject", value=f"**{name}** ({category.replace('_', ' ').title()})", inline=True)
         embed.add_field(name="New Mastery", value=f"`{amount}` Points", inline=True)
         
-        BannerManager.apply(embed, type="admin")
+        BannerManager.apply(embed, type="admin") #
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="mastery_drop_set", description="Admin: Set mastery points rewarded for defeating an NPC.")
     @is_admin()
     async def mastery_drop_set(self, interaction: discord.Interaction, npc_name: str, amount: int):
         """Sets the mastery reward amount for NPCs (Standard or World Bosses)."""
+        # Updates the NPC template so combat rewards are consistent
         result = await db.npcs.update_one(
             {"name": npc_name},
             {"$set": {"mastery_drop": amount}}
@@ -61,11 +56,11 @@ class MasteryAdminCog(commands.Cog):
                 color=0xe74c3c
             )
             embed.add_field(name="Mastery Gain", value=f"`+{amount}` Points", inline=False)
-            BannerManager.apply(embed, type="admin")
+            BannerManager.apply(embed, type="admin") #
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message(f"❌ NPC **{npc_name}** not found in database.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(MasteryAdminCog(bot))
-            
+    
