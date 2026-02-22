@@ -35,7 +35,7 @@ async def apply_effect(target_type, channel_id, user_id, effect_name, base_dmg):
 
 async def combat_variance_loop(channel_id):
     """
-    The 'Breathing' System: Shits damage variance every 12-13 seconds.
+    The 'Breathing' System: Shifts damage variance every 12-13 seconds.
     This creates the 'highs and lows' of a real battle.
     """
     while channel_id in active_combats:
