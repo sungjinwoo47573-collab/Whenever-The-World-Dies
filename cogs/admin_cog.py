@@ -14,20 +14,6 @@ class AdminCog(commands.Cog):
             "Legendary": 0xf1c40f, "Special Grade": 0xe74c3c
         }
 
-    # --- CLAN SYSTEM ---
-    @app_commands.command(name="clan_create", description="Admin: Create a Clan with specific buffs.")
-    @is_admin()
-    async def clan_create(self, interaction: discord.Interaction, name: str, hp_buff: int, ce_buff: int, dmg_buff: int, roll_chance: float):
-        clan_data = {
-            "name": name, "hp_buff": hp_buff, "ce_buff": ce_buff, 
-            "dmg_buff": dmg_buff, "roll_chance": roll_chance
-        }
-        await db.clans.update_one({"name": name}, {"$set": clan_data}, upsert=True)
-        
-        embed = discord.Embed(title="⛩️ CLAN REGISTERED", description=f"**{name}** added to the lineage database.", color=0x2ecc71)
-        embed.add_field(name="Buffs", value=f"HP: +{hp_buff} | CE: +{ce_buff} | DMG: +{dmg_buff}")
-        BannerManager.apply(embed, type="admin")
-        await interaction.response.send_message(embed=embed)
 
     # --- ITEM & WEAPON SYSTEM ---
     @app_commands.command(name="item_create", description="Admin: Create a Weapon or Accessory.")
