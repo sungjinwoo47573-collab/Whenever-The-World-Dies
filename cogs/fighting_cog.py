@@ -11,7 +11,7 @@ class FightingCog(commands.Cog):
         self.bot = bot
 
     def get_grade_from_level(self, level):
-        """Maps levels to Jujutsu Sorcerer Grades with updated naming."""
+        """Maps levels to Jujutsu Sorcerer Grades."""
         if level >= 80: return "Special Grade"
         if level >= 60: return "Grade 1"
         if level >= 40: return "Grade 2"
@@ -33,6 +33,7 @@ class FightingCog(commands.Cog):
             new_grade = self.get_grade_from_level(new_level)
             
             # Update DB: Level up, grant points, and refresh current HP/CE
+            # Synchronized with File 2 & 5 keys: hp, ce, cur_ce
             await db.players.update_one(
                 {"_id": user_id},
                 {
@@ -40,17 +41,16 @@ class FightingCog(commands.Cog):
                         "level": new_level, 
                         "xp": current_xp - xp_needed, 
                         "grade": new_grade,
-                        "stats.current_hp": player['stats']['max_hp'],
-                        "stats.current_ce": player['stats']['max_ce']
+                        "stats.current_hp": player['stats'].get('hp', 500),
+                        "stats.cur_ce": player['stats'].get('ce', 100)
                     },
                     "$inc": {"stat_points": 5}
                 }
             )
             
-            # --- High-Quality Progression Embed ---
             embed = discord.Embed(
                 title="✨ LEVEL UP: CURSED ENERGY SURGE",
-                description=f"**{player['name']}** has reached a new height of sorcery!",
+                description=f"**{player.get('name', 'Sorcerer')}** has reached a new height of power!",
                 color=0xf1c40f
             )
             embed.add_field(name="📈 Level", value=f"`{level}` → `{new_level}`", inline=True)
@@ -88,20 +88,18 @@ class FightingCog(commands.Cog):
     @app_commands.command(name="fighting_create", description="Admin: Create and map moves for a Fighting Style.")
     @is_admin()
     async def fighting_create(self, interaction: discord.Interaction, name: str, 
-                               s1_name: str, s1_dmg: int, 
-                               s2_name: str, s2_dmg: int, 
-                               s3_name: str, s3_dmg: int):
-        """Creates a style and automatically populates the combat 'skills' collection."""
+                               s1_name: str, s1_dmg: int, s1_cd: int,
+                               s2_name: str, s2_dmg: int, s2_cd: int,
+                               s3_name: str, s3_dmg: int, s3_cd: int):
+        """Creates a style and populates the combat 'skills' collection with cooldowns."""
         
-        # 1. Update Style Entry
         style_data = {"name": name, "skills_mapped": True}
         await db.fighting_styles.update_one({"name": name}, {"$set": style_data}, upsert=True)
         
-        # 2. Map moves to !F1, !F2, !F3 in the skills collection
         moves = [
-            {"move_number": 1, "name": name, "move_title": s1_name, "damage": s1_dmg},
-            {"move_number": 2, "name": name, "move_title": s2_name, "damage": s2_dmg},
-            {"move_number": 3, "name": name, "move_title": s3_name, "damage": s3_dmg}
+            {"move_number": 1, "name": name, "move_title": s1_name, "damage": s1_dmg, "cooldown": s1_cd},
+            {"move_number": 2, "name": name, "move_title": s2_name, "damage": s2_dmg, "cooldown": s2_cd},
+            {"move_number": 3, "name": name, "move_title": s3_name, "damage": s3_dmg, "cooldown": s3_cd}
         ]
         
         for move in moves:
@@ -118,4 +116,4 @@ class FightingCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(FightingCog(bot))
-                                    
+            
