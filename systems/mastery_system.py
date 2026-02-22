@@ -1,3 +1,4 @@
+import math
 from database.connection import db
 
 async def process_mastery_drop(npc_name, player_id):
@@ -25,8 +26,10 @@ async def process_mastery_drop(npc_name, player_id):
     for category in ["technique", "weapon", "fighting_style"]:
         item_name = loadout.get(category)
         if item_name and item_name != "None":
-            # Example path: mastery.Dismantle_and_Cleave
-            field = f"mastery.{item_name}"
+            # Dynamic key: mastery.Shrine or mastery.Playful_Cloud
+            # We sanitize the name to ensure MongoDB keys don't contain illegal characters
+            sanitized_name = str(item_name).replace(".", "_")
+            field = f"mastery.{sanitized_name}"
             update_query[field] = mastery_amt
 
     if update_query:
@@ -38,24 +41,34 @@ async def process_mastery_drop(npc_name, player_id):
 def calculate_mastery_level(points):
     """
     Converts raw points into a Mastery Tier (1-10).
-    Formula: Levels increase exponentially (Level 2 = 100pts, Level 3 = 400pts, etc.)
+    Formula: Levels increase exponentially using a square root curve.
+    
+    Level 1: 0 pts
+    Level 2: 100 pts
+    Level 3: 400 pts
+    Level 4: 900 pts
+    ...
+    Level 10: 8,100 pts
     """
-    if points <= 0: return 1
-    # Simple curve: Level = sqrt(points / 100) + 1
-    import math
+    if points <= 0: 
+        return 1
+        
+    # Formula: Level = sqrt(points / 100) + 1
+    # Example: sqrt(400 / 100) + 1 = 2 + 1 = Level 3
     level = int(math.sqrt(points / 100)) + 1
-    return min(level, 10) # Cap at Mastery Level 10
+    return min(level, 10) # Hard cap at Mastery Level 10
 
 async def check_skill_unlocked(player_id, item_name, required_level):
     """
     Checks if the player's Mastery Level for a specific item 
-    meets the requirement for a specific move (e.g., !CE 3).
+    meets the requirement for advanced moves (e.g., !CE 3).
     """
     player = await db.players.find_one({"_id": str(player_id)})
     if not player:
         return False
         
-    raw_points = player.get("mastery", {}).get(item_name, 0)
+    sanitized_name = str(item_name).replace(".", "_")
+    raw_points = player.get("mastery", {}).get(sanitized_name, 0)
     current_level = calculate_mastery_level(raw_points)
     
     return current_level >= required_level
