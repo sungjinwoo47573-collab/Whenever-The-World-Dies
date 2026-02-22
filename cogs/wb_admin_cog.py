@@ -110,16 +110,40 @@ class WorldBossAdminCog(commands.Cog):
             )
         await interaction.response.send_message(f"✅ Cooldowns for **{name}** updated: `{cds}`")
 
-    @app_commands.command(name="wb_domain_set", description="Admin: Configure Boss Domain Expansion.")
-    @app_commands.describe(name="Boss Name", damage="Total Domain DMG", max_use="Times it can use Domain")
+    # --- DOMAIN CONFIGURATION ---
+
+    @app_commands.command(name="wbdomainset", description="Admin: Set Domain stats (Dmg/MaxUse) for a boss.")
+    @app_commands.describe(
+        name="The exact name of the Boss",
+        dmg="Total damage dealt to active raiders on trigger",
+        maxuse="How many times the boss can expand its domain"
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def wb_domain_set(self, interaction: discord.Interaction, name: str, damage: int, max_use: int = 1):
-        """Sets the Domain Expansion parameters for a specific boss."""
-        await db.npcs.update_one(
+    async def wbdomainset(self, interaction: discord.Interaction, name: str, dmg: int, maxuse: int = 1):
+        """Customizes the Domain Expansion parameters for a specific boss."""
+        result = await db.npcs.update_one(
             {"name": name, "is_world_boss": True},
-            {"$set": {"domain_dmg": damage, "domain_max": max_use}}
+            {"$set": {
+                "domain_dmg": dmg,
+                "domain_max": maxuse
+            }}
         )
-        await interaction.response.send_message(f"✅ Domain set for **{name}**: `{damage} DMG`, Max `{max_use}` uses.")
+        
+        if result.matched_count == 0:
+            return await interaction.response.send_message(f"❌ Boss `{name}` not found.", ephemeral=True)
+
+        embed = discord.Embed(
+            title="🌌 DOMAIN RECALIBRATED",
+            description=f"Technique parameters for **{name}** have been updated.",
+            color=0x9b59b6
+        )
+        embed.add_field(name="💥 Burst DMG", value=f"`{dmg:,}`", inline=True)
+        embed.add_field(name="🔄 Max Uses", value=f"`{maxuse}`", inline=True)
+        
+        BannerManager.apply(embed, type="admin")
+        await interaction.response.send_message(embed=embed)
+
+    # --- UTILITY COMMANDS ---
 
     @app_commands.command(name="wb_ping", description="Admin: Alert all registered raid channels.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -163,4 +187,4 @@ class WorldBossAdminCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossAdminCog(bot))
-        
+                          
