@@ -13,6 +13,11 @@ class WorldBossCog(commands.Cog):
         self.revenge_meter = {}
         self.aggro_list = set()
         
+        # --- DOMAIN STATE ---
+        self.is_boss_frozen = False
+        self.frozen_until = None
+        self.domain_owner = None
+        
         # --- RAID CONFIGURATION ---
         self.MAX_RAIDERS = 23 
         self.auto_spawn_loop.start()
@@ -24,12 +29,10 @@ class WorldBossCog(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def auto_spawn_loop(self):
-        """Manifests a boss across all 6 sectors every 10 minutes."""
         config_chans = await db.db["settings"].find_one({"setting": "wb_channels"})
         if not config_chans or not config_chans.get("channel_ids"):
             return
 
-        # Prevent overlapping spawns if a boss is still alive
         active_boss = await db.npcs.find_one({"is_world_boss": True, "current_hp": {"$gt": 0}})
         if active_boss:
             return 
@@ -41,7 +44,6 @@ class WorldBossCog(commands.Cog):
         
         selected_boss = random.choice(all_bosses)
         
-        # Reset stats for the fresh global encounter
         await db.npcs.update_one(
             {"_id": selected_boss["_id"]},
             {"$set": {
@@ -59,7 +61,7 @@ class WorldBossCog(commands.Cog):
                 f"**Raid Capacity:** `{self.MAX_RAIDERS}` per sector.\n\n"
                 "**BATTLE PROTOCOL:**\n"
                 "• All damage is synced across all channels.\n"
-                "• Hit 0 HP = 10s Soul Lockout.\n"
+                "• Use `!domain` to freeze the boss (2 mins).\n"
                 "• Domain triggers at 10% HP (Expect Debuffs)."
             ),
             color=0xff0000
@@ -78,13 +80,6 @@ class WorldBossCog(commands.Cog):
 
     # --- COMBAT UTILITIES ---
 
-    def get_hp_visuals(self, current, max_hp, phase=1):
-        if max_hp <= 0: return "`[⬛⬛⬛⬛⬛]`", 0x000000, "DEAD"
-        perc = (current / max_hp) * 100
-        filled = max(0, min(10, int(perc / 10)))
-        bar_emoji = "🟩" if phase == 1 else "🟥"
-        return f"`{bar_emoji * filled}{'⬛' * (10-filled)}` **{perc:.1f}%**", 0, "LIVE"
-
     async def handle_player_death(self, ctx, member: discord.Member):
         user_id = str(member.id)
         if user_id in self.aggro_list:
@@ -102,7 +97,6 @@ class WorldBossCog(commands.Cog):
         except: pass
 
     async def trigger_domain(self, ctx, boss):
-        """Activates Domain, damages all active players, and sets global debuff."""
         if boss.get("domain_count", 0) >= boss.get("domain_max", 1):
             return
 
@@ -126,7 +120,7 @@ class WorldBossCog(commands.Cog):
         await ctx.send("📉 **TERRITORY PRESSURE:** Players now deal less damage and have slower cooldowns!")
 
     async def boss_retaliation(self, ctx, boss):
-        if not self.aggro_list: return
+        if not self.aggro_list or self.is_boss_frozen: return
         phase_mult = 2.5 if boss.get("phase", 1) == 2 else 1.0
         
         targets = list(self.aggro_list)
@@ -141,8 +135,47 @@ class WorldBossCog(commands.Cog):
             if p_data.get("stats", {}).get("current_hp", 0) <= 0:
                 self.bot.loop.create_task(self.handle_player_death(ctx, member))
 
-        hp_bar, _, _ = self.get_hp_visuals(boss['current_hp'], boss['max_hp'], boss.get('phase', 1))
-        await ctx.send(f"**{boss['name']} Retaliates!**\n{hp_bar}")
+        await ctx.send(f"💢 **{boss['name']}** retaliates against the raid party!")
+
+    # --- PLAYER DOMAIN ---
+
+    @commands.command(name="domain")
+    async def player_domain(self, ctx):
+        user_id = str(ctx.author.id)
+        player = await db.players.find_one({"_id": user_id})
+        boss = await db.npcs.find_one({"is_world_boss": True, "current_hp": {"$gt": 0}})
+
+        if not player or not boss:
+            return await ctx.send("❌ No World Boss to target.")
+
+        if player.get("stats", {}).get("cur_ce", 0) < 100:
+            return await ctx.send("❌ Insufficient Cursed Energy (100 required).")
+
+        if self.is_boss_frozen:
+            return await ctx.send("⚠️ A Domain is already active!")
+
+        # Activate
+        self.is_boss_frozen = True
+        self.domain_owner = user_id
+        duration = 120 # 2 minutes
+        self.frozen_until = datetime.utcnow() + timedelta(seconds=duration)
+        await db.players.update_one({"_id": user_id}, {"$inc": {"stats.cur_ce": -100}})
+
+        await ctx.send(f"🌀 **DOMAIN EXPANSION!** {ctx.author.name} has frozen **{boss['name']}** for 2 minutes!")
+
+        # Domain Clash/Freeze Loop
+        elapsed = 0
+        while elapsed < duration and self.is_boss_frozen:
+            await asyncio.sleep(10)
+            elapsed += 10
+            # 15% chance for Boss to attempt a Clash and break out
+            if random.random() < 0.15:
+                self.is_boss_frozen = False
+                await ctx.send(f"💥 **DOMAIN CLASH!** {boss['name']} has shattered the player's domain early!")
+                return
+
+        self.is_boss_frozen = False
+        await ctx.send(f"🧊 **{boss['name']}** is no longer frozen.")
 
     # --- MAIN ATTACK LOGIC ---
 
@@ -155,58 +188,54 @@ class WorldBossCog(commands.Cog):
 
         if user_id not in self.aggro_list:
             if len(self.aggro_list) >= self.MAX_RAIDERS:
-                return await ctx.send(f"🚫 Raid Full! ({self.MAX_RAIDERS}/{self.MAX_RAIDERS})", delete_after=5)
+                return await ctx.send(f"🚫 Raid Full!", delete_after=5)
             self.aggro_list.add(user_id)
 
         if player['stats']['current_hp'] <= 0: return
 
-        # Apply Domain Debuffs (7% - 12%)
-        penalty = random.uniform(0.07, 0.12) if boss.get("is_domain_active") else 0
+        # Penalties (Disabled if boss is frozen by player domain)
+        penalty = 0
+        if boss.get("is_domain_active") and not self.is_boss_frozen:
+            penalty = random.uniform(0.07, 0.12)
         
         loadout_key = {"CE": "technique", "W": "weapon", "F": "fighting_style"}[category]
         item_name = player.get("loadout", {}).get(loadout_key)
         skill = await db.skills.find_one({"name": item_name, "move_number": move_num})
         if not skill: return
 
-        # Cooldown Logic (Increased by penalty)
         cd_key = f"{user_id}_{item_name}_{move_num}"
-        now = datetime.utcnow()
-        if cd_key in self.cooldowns and now < self.cooldowns[cd_key]:
+        if cd_key in self.cooldowns and datetime.utcnow() < self.cooldowns[cd_key]:
             return await ctx.send("⏳ Cooldown!", delete_after=1)
         
-        final_cd = skill.get("cooldown", 3) * (1 + penalty)
-        self.cooldowns[cd_key] = now + timedelta(seconds=final_cd)
+        self.cooldowns[cd_key] = datetime.utcnow() + timedelta(seconds=skill.get("cooldown", 3) * (1+penalty))
 
-        # Damage Logic (Decreased by penalty)
-        dmg_calc = (player['stats']['dmg'] + skill.get("damage", 0)) * random.uniform(0.98, 1.05)
-        dmg_calc *= (1 - penalty)
-
+        # Damage
+        dmg_calc = (player['stats']['dmg'] + skill.get("damage", 0)) * random.uniform(0.95, 1.05) * (1-penalty)
         if self.revenge_meter.get(user_id, 0) >= 3:
-            final_dmg, is_bf = int(dmg_calc * 2.5), True
+            final_dmg = int(dmg_calc * 2.5)
             self.revenge_meter[user_id] = 0
+            await ctx.send("✨ **BLACK FLASH!**")
         else:
-            # 1% chance for natural Black Flash
-            is_bf = random.random() < 0.01
-            final_dmg = int(dmg_calc * 2.5) if is_bf else int(dmg_calc)
+            final_dmg = int(dmg_calc)
 
         new_hp = max(0, boss['current_hp'] - final_dmg)
-        
-        if is_bf: await ctx.send("✨ **BLACK FLASH!**")
-        await ctx.send(f"⚔️ **{ctx.author.name}** strikes **{boss['name']}**! (`-{final_dmg:,}` HP)")
+        await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_hp}})
+        await ctx.send(f"⚔️ **{ctx.author.name}** deals `{final_dmg:,}` damage!")
 
-        # Update and Check Domain Trigger
         if new_hp <= 0:
+            self.is_boss_frozen = False
             await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": 0, "is_domain_active": False}})
             self.aggro_list.clear()
-            await ctx.send(f"🎊 **{boss['name']} has been EXORCISED!**")
+            await ctx.send(f"🎊 **{boss['name']} defeated!**")
         else:
-            await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_hp}})
-            # Trigger Domain if below 10% and not active
-            if new_hp <= (boss['max_hp'] * 0.1) and not boss.get("is_domain_active"):
-                await self.trigger_domain(ctx, boss)
+            if not self.is_boss_frozen:
+                if new_hp <= (boss['max_hp'] * 0.1) and not boss.get("is_domain_active"):
+                    await self.trigger_domain(ctx, boss)
+                else:
+                    await asyncio.sleep(1)
+                    await self.boss_retaliation(ctx, boss)
             else:
-                await asyncio.sleep(1.2)
-                await self.boss_retaliation(ctx, boss)
+                await ctx.send("❄️ Boss is frozen and cannot counter.", delete_after=2)
 
     @commands.command(name="CE")
     async def ce(self, ctx, m: int = 1): await self.execute_attack(ctx, "CE", m)
