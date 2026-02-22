@@ -9,27 +9,34 @@ class FunCog(commands.Cog):
         self.bot = bot
 
     def get_grade_from_level(self, level):
-        """Standardized rank mapping to match FightingCog."""
+        """Standardized rank mapping to match Progression systems."""
         if level >= 80: return "Special Grade"
         if level >= 60: return "Grade 1"
         if level >= 40: return "Grade 2"
         if level >= 20: return "Grade 3"
         return "Grade 4"
 
-    @app_commands.command(name="setlevel", description="Admin: Manually set a sorcerer's level and rank.")
+    @app_commands.command(name="setlevel", description="Admin: Manually set a sorcerer's level and synchronize all vitals.")
     @app_commands.describe(user="The user to modify", level="The target level")
     @app_commands.checks.has_permissions(administrator=True)
     async def set_level(self, interaction: discord.Interaction, user: discord.User, level: int):
+        """Updates level, recalculates max stats, and performs a full heal/recharge."""
         user_id = str(user.id)
         player = await db.players.find_one({"_id": user_id})
 
         if not player:
             return await interaction.response.send_message("❌ User has no profile.", ephemeral=True)
 
-        # Logic: Recalculate rank and grant points based on new level
+        # 1. Logic: Recalculate Rank & Stat Points
         new_grade = self.get_grade_from_level(level)
         stat_points = (level - 1) * 5
         
+        # 2. Logic: Recalculate Max Stats based on Level growth
+        # Scaling: Base (500 HP / 100 CE) + 10 per level
+        new_max_hp = 500 + (level * 10)
+        new_max_ce = 100 + (level * 10)
+        
+        # 3. Database Update: Set level and SYNC current vitals to new maxes
         await db.players.update_one(
             {"_id": user_id},
             {
@@ -38,21 +45,22 @@ class FunCog(commands.Cog):
                     "stat_points": stat_points,
                     "grade": new_grade,
                     "xp": 0,
-                    # Full heal on manual level set
-                    "stats.current_hp": player['stats']['max_hp'],
-                    "stats.current_ce": player['stats']['max_ce']
+                    "stats.max_hp": new_max_hp,
+                    "stats.current_hp": new_max_hp, # Full Heal
+                    "stats.max_ce": new_max_ce,
+                    "stats.current_ce": new_max_ce  # Full Recharge
                 }
             }
         )
 
         embed = discord.Embed(
-            title="🛠️ ARCHIVES UPDATED",
-            description=f"The status of {user.mention} has been manually altered by the Higher-Ups.",
-            color=0x2ecc71
+            title="🛠️ STATUS OVERWRITE: COMPLETE",
+            description=f"The spiritual authority of {user.mention} has been manually realigned.",
+            color=0x9b59b6
         )
-        embed.add_field(name="Level", value=f"`{level}`", inline=True)
-        embed.add_field(name="Rank", value=f"`{new_grade}`", inline=True)
-        embed.add_field(name="Total SP", value=f"`{stat_points}`", inline=True)
+        embed.add_field(name="Ascension", value=f"Level `{level}`\nRank: `{new_grade}`", inline=True)
+        embed.add_field(name="Vitality Sync", value=f"❤️ `{new_max_hp}` HP\n🧪 `{new_max_ce}` CE", inline=True)
+        embed.add_field(name="Resources", value=f"✨ `{stat_points}` SP", inline=True)
 
         BannerManager.apply(embed, type="admin")
         await interaction.response.send_message(embed=embed)
