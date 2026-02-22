@@ -27,7 +27,11 @@ class WorldBossAdminCog(commands.Cog):
             {"$set": {"channel_id": channel.id}},
             upsert=True
         )
-        embed = discord.Embed(title="⚙️ SYSTEM CONFIG", description=f"Raid channel successfully set to: {channel.mention}", color=0x2b2d31)
+        embed = discord.Embed(
+            title="⚙️ SYSTEM CONFIG", 
+            description=f"Raid channel successfully set to: {channel.mention}", 
+            color=0x2b2d31
+        )
         BannerManager.apply(embed, type="admin")
         await interaction.response.send_message(embed=embed)
 
@@ -52,12 +56,13 @@ class WorldBossAdminCog(commands.Cog):
         app_commands.Choice(name="Legendary", value="Legendary"),
         app_commands.Choice(name="Special Grade", value="Special Grade")
     ])
+    @app_commands.checks.has_permissions(administrator=True)
     async def wb_create(self, interaction: discord.Interaction, name: str, hp: int, base_dmg: int, image_url: str, rarity: str):
         """Creates a boss entry with the specified stats and threat level."""
         boss_data = {
             "name": name, 
             "max_hp": hp, 
-            "current_hp": 0,
+            "current_hp": 0, # Stays 0 until /wb_start is called
             "base_dmg": base_dmg, 
             "image": image_url, 
             "is_world_boss": True, 
@@ -76,6 +81,7 @@ class WorldBossAdminCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="wb_skills", description="Admin: Assign combat techniques to a boss.")
+    @app_commands.checks.has_permissions(administrator=True)
     async def wb_skills(self, interaction: discord.Interaction, name: str, technique: str, weapon: str, style: str):
         """Sets the names of the attacks used in the Boss's retaliation."""
         await db.npcs.update_one(
@@ -85,6 +91,7 @@ class WorldBossAdminCog(commands.Cog):
         await interaction.response.send_message(f"⚔️ **{name}** is now armed with `{technique}`, `{weapon}`, and `{style}`.")
 
     @app_commands.command(name="wb_list", description="Admin: View all registered World Bosses.")
+    @app_commands.checks.has_permissions(administrator=True)
     async def wb_list(self, interaction: discord.Interaction):
         """Lists all bosses and their current dormant/active status."""
         boss_cursor = db.npcs.find({"is_world_boss": True})
@@ -104,39 +111,30 @@ class WorldBossAdminCog(commands.Cog):
         BannerManager.apply(embed, type="admin")
         await interaction.response.send_message(embed=embed)
 
-    # --- ACTIVATION COMMANDS ---
-
-    @app_commands.command(name="wb_start", description="Admin: Manually manifest a boss and start the encounter.")
-    async def wb_start(self, interaction: discord.Interaction, name: str):
-        """Activates a boss, resets it to Phase 1, and posts the spawn banner."""
-        boss = await db.npcs.find_one({"name": name, "is_world_boss": True})
-        if not boss: return await interaction.response.send_message("❌ Boss not found.")
-        
-        # Reset Boss State
-        await db.npcs.update_one({"name": name}, {"$set": {"current_hp": boss["max_hp"], "phase": 1}})
-        
-        rarity = boss.get("rarity", "Common")
-        embed = discord.Embed(
-            title=f"🚨 {rarity.upper()} THREAT: {name}",
-            description=f"The entity **{name}** has manifested!\n\nUse `!CE`, `!F`, or `!W` to engage. Be prepared—the boss will counter every strike.",
-            color=self.boss_rarities.get(rarity, 0xe74c3c)
-        )
-        if "image" in boss: embed.set_image(url=boss["image"])
-        BannerManager.apply(embed, type="combat")
-        await interaction.response.send_message(embed=embed)
+    # NOTE: /wb_start is REMOVED from this cog. 
+    # Use the cinematic /wb_start in WorldBossCog instead.
 
     @app_commands.command(name="wb_ping", description="Admin: Ping the notification role in the raid channel.")
+    @app_commands.checks.has_permissions(administrator=True)
     async def wb_ping(self, interaction: discord.Interaction):
-        """Dispatches a notification to the raid role."""
+        """Dispatches a notification to the raid role in the setup channel."""
         config_chan = await db.db["settings"].find_one({"setting": "wb_channel"})
         config_role = await db.db["settings"].find_one({"setting": "wb_role"})
         
-        if not config_chan: return await interaction.response.send_message("❌ Use `/wb_setup_channel` first.", ephemeral=True)
+        if not config_chan: 
+            return await interaction.response.send_message("❌ Setup failed. Use `/wb_setup_channel` first.", ephemeral=True)
         
         channel = self.bot.get_channel(config_chan.get("channel_id"))
+        if not channel:
+            return await interaction.response.send_message("❌ Specified raid channel no longer exists.", ephemeral=True)
+
         role_ping = f"<@&{config_role['role_id']}>" if config_role else "@everyone"
         
-        embed = discord.Embed(title="📢 RAID CALL TO ARMS", description="A Special Grade has been spotted! Report to the raid channel immediately!", color=0xF1C40F)
+        embed = discord.Embed(
+            title="📢 RAID CALL TO ARMS", 
+            description="A Special Grade threat has been spotted! Report to the raid channel immediately!", 
+            color=0xF1C40F
+        )
         BannerManager.apply(embed, type="main")
         
         await channel.send(content=role_ping, embed=embed)
@@ -144,4 +142,4 @@ class WorldBossAdminCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossAdminCog(bot))
-    
+        
