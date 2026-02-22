@@ -2,63 +2,69 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.banner_manager import BannerManager
 
 class HelpCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="help", description="View all commands or your current move-set.")
+    @app_commands.command(name="help", description="Guide: View all commands and your active cursed techniques.")
     async def help_cmd(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         player = await db.players.find_one({"_id": user_id})
 
         embed = discord.Embed(
-            title="⛩️ Jujutsu Chronicles: Sorcerer Guide",
-            description="Master your cursed energy with the following commands:",
-            color=0x2f3136
+            title="⛩️ JUJUTSU CHRONICLES: SORCERER GUIDE",
+            description="Master the art of Cursed Energy. Below are the protocols for engagement.",
+            color=0x2b2d31
         )
 
-        # --- COMBAT COMMANDS ---
+        # --- COMBAT SYSTEM ---
         combat_info = (
-            "👊 **!F1 - !F3** : Use Fighting Style Skills\n"
-            "📜 **!CE1 - !CE5** : Use Cursed Technique Skills\n"
-            "⚔️ **!W1 - !W4** : Use Weapon Skills\n"
-            "🤞 **!Domain** : Expand your Domain (Special Grade only)"
+            "🌀 **!CE <1-5>** : Execute Cursed Technique Moves\n"
+            "👊 **!F <1-3>** : Execute Fighting Style Strikes\n"
+            "⚔️ **!W <1-3>** : Execute Weapon Arts\n"
+            "🤞 **!DOMAIN** : Attempt Domain Expansion (Requires CT)"
         )
-        embed.add_field(name="⚔️ Combat Inputs", value=combat_info, inline=False)
+        embed.add_field(name="⚔️ COMBAT PROTOCOLS", value=combat_info, inline=False)
 
-        # --- PLAYER COMMANDS ---
-        player_info = (
-            "`/profile` : Check Stats & Grade\n"
-            "`/inventory` : View owned Techniques/Items\n"
-            "`/equip` : Change your current Loadout\n"
-            "`/upgrade_stats` : Spend points on HP/CE/DMG"
+        # --- PROGRESSION SYSTEM ---
+        prog_info = (
+            "`/profile` : Status, Grade, and Attributes\n"
+            "`/inventory` : Owned Techniques & Weapons\n"
+            "`/equip` : Assign items to your Loadout\n"
+            "`/distribute` : Spend Stat Points on HP/CE/DMG"
         )
-        embed.add_field(name="👤 Sorcerer Management", value=player_info, inline=False)
+        embed.add_field(name="📜 SORCERER MANAGEMENT", value=prog_info, inline=False)
 
-        # --- DYNAMIC MOVESET (If Player exists) ---
+        # --- DYNAMIC ACTIVE MOVESET ---
         if player:
             loadout = player.get("loadout", {})
-            tech = loadout.get("technique", "None")
-            style = loadout.get("fighting_style", "None")
-            weapon = loadout.get("weapon", "None")
+            tech_name = loadout.get("technique")
+            
+            # Fetch specific move names if they have a tech equipped
+            moves_text = ""
+            if tech_name:
+                cursor = db.skills.find({"name": tech_name}).sort("move_number", 1)
+                moves = await cursor.to_list(length=5)
+                if moves:
+                    moves_text = "\n".join([f"`!CE {m['move_number']}` : **{m.get('move_title', 'Unknown')}**" for m in moves])
+                else:
+                    moves_text = f"Equipped: **{tech_name}** (No moves mapped)"
+            else:
+                moves_text = "No Cursed Technique equipped."
 
-            moveset_str = (
-                f"🌀 **Tech:** {tech}\n"
-                f"👊 **Style:** {style}\n"
-                f"🗡️ **Weapon:** {weapon}\n\n"
-                "*Equip items to see specific skill names here.*"
-            )
-            embed.add_field(name="🌀 Your Active Loadout", value=moveset_str, inline=False)
+            embed.add_field(name="🌀 ACTIVE TECHNIQUE MOVES", value=moves_text, inline=False)
 
-        # --- ADMIN SECTION (Only shows for Admins) ---
+        # --- ADMIN SECTION ---
         if interaction.user.guild_permissions.administrator:
-            admin_info = "`/npc_create`, `/technique_create`, `/raid_create`, `/set_mastery`, `/wipe_everything`"
-            embed.add_field(name="🛠️ Admin Suite", value=admin_info, inline=False)
+            admin_info = "`/wb_create`, `/wb_start`, `/technique_skills`, `/setlevel`, `/addmoney`"
+            embed.add_field(name="🛠️ HIGHER-UPS (ADMIN)", value=f"||{admin_info}||", inline=False)
 
-        embed.set_footer(text="The veil protects the weak. The strong protect the veil.")
+        embed.set_footer(text="Through the heavens and earth, I alone am the honored one.")
+        BannerManager.apply(embed, type="main")
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(HelpCog(bot))
-      
+    
