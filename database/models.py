@@ -1,84 +1,102 @@
 import time
 
 def player_model(user_id, username):
+    """
+    Initializes a new sorcerer. 
+    Synchronized with CombatCog and WorldBossCog requirements.
+    """
     return {
         "_id": str(user_id),
         "name": username,
         "level": 1,
         "xp": 0,
-        "money": 0,
-        "stat_points": 0,
-        "stats": {"hp": 100, "max_hp": 100, "ce": 50, "max_ce": 50, "dmg": 10},
-        "clan": None,
+        "money": 500, # Starting Yen for the shop
+        "stat_points": 5,
+        "grade": "Grade 4",
+        "clan": "None",
         "clan_rerolls": 3,
-        "inventory": [], # List of item names/IDs
-        "techniques": [], # List of purchased techniques
+        "stats": {
+            "max_hp": 500, 
+            "current_hp": 500, 
+            "max_ce": 100, 
+            "current_ce": 100, 
+            "dmg": 20
+        },
+        "inventory": [], # Holds names of Techniques, Weapons, and Styles
         "loadout": {
             "technique": None, 
             "weapon": None, 
-            "fighting_style": None,
-            "accessory": None
+            "fighting_style": None
         },
-        "mastery": {}, # e.g., {"Divergent Fist": 50}
-        "grade": "Grade 4 Sorcerer",
+        "mastery": {}, # Key-value: {"Shrine": 100}
         "created_at": time.time()
     }
 
-def clan_model(name, hp_b, ce_b, dmg_b, chance):
+def clan_model(name, hp_buff, ce_buff, dmg_buff, roll_chance):
+    """
+    Standardized for the ClanCog reroll logic.
+    """
     return {
         "name": name,
-        "buffs": {"hp": hp_b, "ce": ce_b, "dmg": dmg_b},
-        "roll_chance": chance # e.g., 0.01 for 1%
+        "hp_buff": hp_buff,
+        "ce_buff": ce_buff,
+        "dmg_buff": dmg_buff,
+        "roll_chance": roll_chance # e.g., 0.01 for 1%
     }
 
 def technique_model(name, stock_chance, price=0):
+    """
+    Used by AdminCog and WorldCog shop logic.
+    """
     return {
         "name": name,
         "stock_chance": stock_chance,
         "price": price,
-        "skills": {
-            "1": None, "2": None, "3": None, "4": None, "5": None
-        },
-        "domain": None # Stores domain_model data
+        "domain": None # Nested domain_data when configured
     }
 
-def skill_model(name, dmg, effect=None):
+def npc_model(name, hp, dmg, img, is_world_boss=False):
+    """
+    The blueprint for both regular Curses and World Bosses.
+    """
     return {
         "name": name,
-        "dmg": dmg,
-        "effect": effect # "Burn", "Drain", "Bleed", "Stun"
-    }
-
-def item_model(name, is_weapon, dmg=0, grade="Grade 4", buffs=None):
-    return {
-        "name": name,
-        "is_weapon": is_weapon,
-        "dmg": dmg,
-        "grade": grade,
-        "buffs": buffs or {"hp": 0, "ce": 0, "dmg": 0} # For accessories
-    }
-
-def npc_model(name, is_boss, hp, dmg, img, drops=None):
-    return {
-        "name": name,
-        "is_boss": is_boss,
-        "hp": hp,
+        "is_world_boss": is_world_boss,
         "max_hp": hp,
+        "current_hp": hp,
         "base_dmg": dmg,
         "image": img,
-        "drops": drops or [], # [{"item": "Name", "chance": 0.1}]
-        "money_drop": 0,
-        "spawn_channels": [],
-        "moveset": {"tech": None, "weapon": None, "style": None}
+        "phase": 1,
+        "technique": None, # Used for reactive boss counters
+        "weapon": None,
+        "fighting_style": None,
+        "mastery_drop": 50,
+        "money_drop": 1000,
+        "drops": [] # List of {"item": str, "chance": float}
     }
 
-def raid_model(name, boss_name, drop_name, drop_chance):
+def skill_model(name, move_number, move_title, damage, rarity="Common"):
+    """
+    The move blueprint for !CE, !W, and !F commands.
+    """
+    return {
+        "name": name,           # The name of the Technique/Weapon it belongs to
+        "move_number": move_number, # 1, 2, or 3
+        "move_title": move_title,   # e.g., "Dismantle"
+        "damage": damage,
+        "rarity": rarity,
+        "effect": None
+    }
+
+def item_model(name, price, is_weapon=True, dmg_buff=0, hp_buff=0):
+    """
+    Used for Weapons and Accessories in the shop.
+    """
     return {
         "name": name,
-        "boss": boss_name,
-        "drop": drop_name,
-        "chance": drop_chance,
-        "active": False,
-        "players": []
+        "price": price,
+        "is_weapon": is_weapon,
+        "dmg_buff": dmg_buff,
+        "hp_buff": hp_buff
     }
     
