@@ -1,35 +1,31 @@
 import json
 import os
-from datetime import datetime
 from database.connection import db
 
 BACKUP_DIR = "./backups"
 
-async def create_backup():
-    """Exports major collections to JSON. Fixed for Motor subscripting."""
-    if not os.path.exists(BACKUP_DIR):
-        os.makedirs(BACKUP_DIR)
+async def restore_from_file(collection_name, file_name):
+    """Overwrites a collection with data from a backup file."""
+    file_path = f"{BACKUP_DIR}/{file_name}"
+    if not os.path.exists(file_path):
+        return False
+    
+    with open(file_path, "r") as f:
+        data = json.load(f)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # major collections to backup
-    collections = ["players", "clans", "items", "techniques", "codes"]
-    backup_results = {}
+    if data:
+        # Warning: This wipes the current collection before inserting backup
+        collection = getattr(db, collection_name)
+        await collection.delete_many({})
+        await collection.insert_many(data)
+        return len(data)
+    return 0
 
-    for coll_name in collections:
-        try:
-            # FIX: Using getattr to safely access the collection from the db object
-            collection = getattr(db, coll_name)
-            cursor = collection.find({})
-            data = await cursor.to_list(length=None)
-            
-            file_path = f"{BACKUP_DIR}/{coll_name}_{timestamp}.json"
-            with open(file_path, "w") as f:
-                # default=str handles ObjectId and datetime objects
-                json.dump(data, f, indent=4, default=str)
-            
-            backup_results[coll_name] = len(data)
-        except Exception as e:
-            print(f"⚠️ Backup Error on {coll_name}: {e}")
-
-    return timestamp, backup_results
+def delete_backup_file(file_name):
+    """Permanently deletes a backup file from the server."""
+    file_path = f"{BACKUP_DIR}/{file_name}"
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        return True
+    return False
     
