@@ -90,7 +90,7 @@ class WorldBossCog(commands.Cog):
         if not player or not boss:
             return await ctx.send("❌ No active World Boss to target.")
 
-        # CE Diagnostic check
+        # CE Diagnostic check - Synced to cur_ce
         current_ce = player.get("stats", {}).get("cur_ce", 0)
         if current_ce < 100:
             return await ctx.send(f"❌ **Insufficient CE.**\nRequired: `100` | Current: `{current_ce}`")
@@ -104,7 +104,7 @@ class WorldBossCog(commands.Cog):
         total_duration = 120 # 2 minutes
         self.frozen_until = datetime.utcnow() + timedelta(seconds=total_duration)
         
-        # Deduct CE
+        # Deduct CE (Atomic Sync)
         await db.players.update_one({"_id": user_id}, {"$inc": {"stats.cur_ce": -100}})
 
         await ctx.send(f"🌀 **DOMAIN EXPANSION!** {ctx.author.name} has manifestated their territory! **{boss['name']}** is frozen!")
@@ -115,17 +115,11 @@ class WorldBossCog(commands.Cog):
             await asyncio.sleep(10)
             elapsed += 10
             
-            # 30-Second Status Update
-            if elapsed % 30 == 0 and elapsed < total_duration:
-                remaining = total_duration - elapsed
-                await ctx.send(f"⏳ **Domain Stability:** {remaining}s remaining... (The boss is struggling!)", delete_after=5)
-
-            # 15% Clash/Breakout Chance
+            # Clash check
             if random.random() < 0.15:
                 self.is_boss_frozen = False
                 return await ctx.send(f"💥 **DOMAIN CLASH!** {boss['name']} has shattered the barrier and broken free!")
 
-        # 3. Natural Expiration
         self.is_boss_frozen = False
         await ctx.send(f"🧊 **{boss['name']}** is no longer frozen.")
 
@@ -191,8 +185,6 @@ class WorldBossCog(commands.Cog):
                 else:
                     await asyncio.sleep(1)
                     await self.boss_retaliation(ctx, boss)
-            else:
-                await ctx.send("❄️ Boss is paralyzed and cannot retaliate!", delete_after=2)
 
     async def trigger_domain(self, ctx, boss):
         if boss.get("domain_count", 0) >= boss.get("domain_max", 1): return
@@ -201,12 +193,11 @@ class WorldBossCog(commands.Cog):
         targets = list(self.aggro_list)
         dmg = boss.get("domain_dmg", 500)
         for uid in targets:
-            member = ctx.guild.get_member(int(uid))
-            if member:
-                await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
-                p = await db.players.find_one({"_id": uid})
-                if p['stats']['current_hp'] <= 0: 
-                    self.bot.loop.create_task(self.handle_player_death(ctx, member))
+            await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
+            p = await db.players.find_one({"_id": uid})
+            if p['stats']['current_hp'] <= 0: 
+                member = ctx.guild.get_member(int(uid))
+                if member: self.bot.loop.create_task(self.handle_player_death(ctx, member))
 
         self.aggro_list.clear()
         await db.npcs.update_one({"_id": boss["_id"]}, {"$inc": {"domain_count": 1}, "$set": {"is_domain_active": True}})
@@ -215,14 +206,12 @@ class WorldBossCog(commands.Cog):
         if not self.aggro_list or self.is_boss_frozen: return
         targets = list(self.aggro_list)
         for uid in targets:
-            member = ctx.guild.get_member(int(uid))
-            if member:
-                dmg = int(boss.get("base_dmg", 100) * random.uniform(0.9, 1.1))
-                await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
-                p = await db.players.find_one({"_id": uid})
-                if p['stats']['current_hp'] <= 0: 
-                    self.bot.loop.create_task(self.handle_player_death(ctx, member))
-        await ctx.send(f"💢 **{boss['name']}** retaliates!")
+            dmg = int(boss.get("base_dmg", 100) * random.uniform(0.9, 1.1))
+            await db.players.update_one({"_id": uid}, {"$inc": {"stats.current_hp": -dmg}})
+            p = await db.players.find_one({"_id": uid})
+            if p['stats']['current_hp'] <= 0: 
+                member = ctx.guild.get_member(int(uid))
+                if member: self.bot.loop.create_task(self.handle_player_death(ctx, member))
 
     async def handle_player_death(self, ctx, member):
         uid = str(member.id)
@@ -245,4 +234,4 @@ class WorldBossCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(WorldBossCog(bot))
-            
+        
