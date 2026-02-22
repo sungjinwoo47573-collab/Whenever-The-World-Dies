@@ -8,44 +8,73 @@ def is_admin():
         return interaction.user.guild_permissions.administrator
     return app_commands.check(predicate)
 
+def has_profile():
+    """Ensures the player exists in the database before running commands."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        player = await db.players.find_one({"_id": str(interaction.user.id)})
+        if not player:
+            await interaction.response.send_message(
+                "❌ Your soul has not yet manifested. Use `/start` to begin your journey.", 
+                ephemeral=True
+            )
+            return False
+        return True
+    return app_commands.check(predicate)
+
 def not_in_combat():
-    """Prevents inventory/stat changes during active combat."""
+    """Prevents inventory, stat, or clan changes during active channel combat."""
     async def predicate(interaction: discord.Interaction) -> bool:
         from systems.combat import active_combats
         if interaction.channel_id in active_combats:
-            await interaction.response.send_message("❌ Your soul is locked in combat! You cannot do this now.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ **CURSED LOCK:** Your focus is entirely on the enemy. You cannot manage your status now!", 
+                ephemeral=True
+            )
             return False
         return True
     return app_commands.check(predicate)
 
 async def handle_fatality(member: discord.Member, channel: discord.TextChannel):
     """
-    The Fatality Rule: Kicks/Hides the channel from a player when HP hits 0.
+    The 'Permanent Loss' logic. When a player's HP hits 0, they are 
+    expelled from the channel to simulate being knocked out or killed.
     """
     try:
-        # Hide the channel from the specific player
-        await channel.set_permissions(member, view_channel=False, send_messages=False)
+        # Override permissions to remove the player from the combat channel
+        await channel.set_permissions(member, overwrite=None)
         
-        # Send a DM or a system message
         embed = discord.Embed(
-            title="💀 FATALITY",
-            description=f"You have been defeated by the Curse in {channel.name}. You are expelled from the battlefield.",
+            title="💀 CRITICAL DEFEAT",
+            description=(
+                f"Your presence has vanished from **{channel.name}**.\n\n"
+                "The weight of the curse was too great. You have been expelled from the battlefield "
+                "to recover your physical form."
+            ),
             color=0x000000
         )
+        embed.set_footer(text="Death is but a transition in the world of Jujutsu.")
+        
         try:
             await member.send(embed=embed)
-        except:
+        except discord.Forbidden:
+            # If DMs are closed, we don't want the bot to crash
             pass
             
         return True
     except Exception as e:
-        print(f"Fatality Error: {e}")
+        print(f"Fatality System Error: {e}")
         return False
 
 async def check_binding_vow(user_id, vow_name):
-    """Check if player has a specific binding vow active."""
+    """
+    Checks if a player has a specific Binding Vow active.
+    Binding Vows are permanent or temporary buffs with heavy costs.
+    """
     player = await db.players.find_one({"_id": str(user_id)})
-    if not player: return False
-    # Logic to check specific conditions like 'Immortal' or 'Unlimited CE'
-    return vow_name in player.get("binding_vows", [])
+    if not player: 
+        return False
     
+    # Binding Vows are stored as a list of strings in the player document
+    vows = player.get("binding_vows", [])
+    return vow_name in vows
+        
