@@ -25,21 +25,20 @@ class ClanCog(commands.Cog):
             return await interaction.response.send_message("❌ You must `/start` your journey first.", ephemeral=True)
 
         if player.get("clan_rerolls", 0) <= 0:
-            return await interaction.response.send_message("❌ You have no Rerolls left! Check for `/codes` or the shop.", ephemeral=True)
+            return await interaction.response.send_message("❌ You have no Rerolls left!", ephemeral=True)
 
         all_clans = await db.clans.find().to_list(length=100)
         if not all_clans:
-            return await interaction.response.send_message("❌ The lineage records are empty (No clans in DB).", ephemeral=True)
+            return await interaction.response.send_message("❌ No clans found in the database.", ephemeral=True)
 
         # 1. Weighted Roll Logic
         weights = [c.get('roll_chance', 0.1) for c in all_clans]
         chosen_clan = random.choices(all_clans, weights=weights, k=1)[0]
         
-        # 2. Buff Calculation (Normalization)
+        # 2. Buff Calculation (Subtraction of old, addition of new)
         old_clan_name = player.get("clan", "None")
         old_clan = await db.clans.find_one({"name": old_clan_name})
         
-        # We handle buffs as flat values from the clan doc
         old_hp = old_clan.get("hp_buff", 0) if old_clan else 0
         old_ce = old_clan.get("ce_buff", 0) if old_clan else 0
         old_dmg = old_clan.get("dmg_buff", 0) if old_clan else 0
@@ -49,23 +48,23 @@ class ClanCog(commands.Cog):
         new_dmg = chosen_clan.get("dmg_buff", 0)
 
         # 3. Atomic Update: Swap buffs and deduct reroll
+        # Note: 'ce' and 'max_hp' are the base stats, 'cur_ce' and 'current_hp' are the pools
         await db.players.update_one(
             {"_id": user_id},
             {
                 "$set": {"clan": chosen_clan['name']},
                 "$inc": {
                     "clan_rerolls": -1,
-                    "stats.max_hp": new_hp - old_hp,
-                    "stats.max_ce": new_ce - old_ce,
+                    "stats.hp": new_hp - old_hp,
+                    "stats.ce": new_ce - old_ce,
                     "stats.dmg": new_dmg - old_dmg,
-                    # Ensure current HP/CE scales up with the new max
                     "stats.current_hp": new_hp - old_hp,
-                    "stats.current_ce": new_ce - old_ce
+                    "stats.cur_ce": new_ce - old_ce 
                 }
             }
         )
 
-        # 4. High-Quality Presentation
+        # 4. Presentation
         chance_percent = chosen_clan.get('roll_chance', 0) * 100
         embed = discord.Embed(
             title="🧬 LINEAGE MANIFESTED", 
@@ -91,4 +90,3 @@ class ClanCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(ClanCog(bot))
-        
