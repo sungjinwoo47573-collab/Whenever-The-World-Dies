@@ -1,33 +1,46 @@
 import discord
+from datetime import datetime
 
-# --- BOT CONFIGURATION ---
-TOKEN = "YOUR_DISCORD_TOKEN"
-MONGO_URI = "YOUR_MONGODB_URI"
+# --- CORE SETTINGS ---
+TOKEN = "YOUR_DISCORD_BOT_TOKEN_HERE"
+MONGO_URI = "YOUR_MONGODB_CONNECTION_STRING_HERE"
 DATABASE_NAME = "JJK_RPG_DB"
 
-# --- UI CONSTANTS ---
-# Use a sleek Jujutsu Blue or Cursed Purple
-MAIN_COLOR = 0x1a73e8 
-ADMIN_COLOR = 0xff4757
-SUCCESS_COLOR = 0x2ed573
+# --- UI & BRANDING ---
+MAIN_COLOR = 0x007BFF    # Professional Blue
+ADMIN_COLOR = 0xFF4757   # Danger/Admin Red
+SUCCESS_COLOR = 0x2ED573 # Success Green
 
-# EMBED ASSETS (Replace these with your hosted links)
-THUMBNAIL_URL = "https://example.com/jjk_logo.png"
-BANNER_URL = "https://example.com/jjk_banner.png"
-FOOTER_TEXT = "Jujutsu High Management System | 2026"
-FOOTER_ICON = "https://example.com/icon.png"
+# ASSETS (Replace these with your high-quality hosted images)
+BANNER_URL = "https://example.com/jjk_main_banner.png" 
+THUMBNAIL_URL = "https://example.com/sorcerer_id_icon.png"
+FOOTER_ICON = "https://example.com/jjk_logo_small.png"
+FOOTER_TEXT = "Jujutsu Kaisen MMORPG • 2026 Management System"
 
-def create_base_embed(title, description, user=None):
-    """Helper to maintain high-quality UI across all scripts"""
+# --- SYSTEM SETTINGS ---
+MAX_RAID_PLAYERS = 12
+MAX_WORLD_BOSS_ATTACKERS = 23
+BLACK_FLASH_CHANCE = 100 # 1 in 100 chance
+XP_PER_MESSAGE = 15      # Base XP for chatting
+
+def create_embed(title: str, description: str, color: int = MAIN_COLOR, user: discord.User = None):
+    """
+    Standard high-quality embed factory to maintain professional UI
+    across all commands.
+    """
     embed = discord.Embed(
         title=title,
         description=description,
-        color=MAIN_COLOR
+        color=color,
+        timestamp=datetime.now()
     )
+    
     if user:
-        embed.set_author(name=user.name, icon_url=user.display_avatar.url)
+        embed.set_author(name=f"Sorcerer: {user.name}", icon_url=user.display_avatar.url)
+    
     embed.set_thumbnail(url=THUMBNAIL_URL)
     embed.set_image(url=BANNER_URL)
     embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
+    
     return embed
-  
+    
