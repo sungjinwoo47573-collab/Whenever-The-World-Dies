@@ -12,7 +12,7 @@ class NukeCog(commands.Cog):
         name="wipe_everything", 
         description="⚠️ ULTIMATE AUTHORITY: Erase all data across the entire Jujutsu database."
     )
-    @commands.is_owner() # Restricted to the Bot Owner only
+    @commands.is_owner() # Restricted to the Bot Owner (defined in main.py)
     async def wipe_everything(self, interaction: discord.Interaction, confirmation_phrase: str):
         """
         Total system reset. Deletes players, npcs, items, and the skills library.
@@ -22,25 +22,34 @@ class NukeCog(commands.Cog):
         
         if confirmation_phrase != safety_phrase:
             return await interaction.response.send_message(
-                f"❌ **Safety Protocol Active.** To purge the world, you must type: `{safety_phrase}`", 
+                f"❌ **Safety Protocol Active.** To purge the world, you must type exactly: `{safety_phrase}`", 
                 ephemeral=True
             )
 
-        # Deferring as bulk deletion in MongoDB can take a moment
+        # Deferring to prevent timeout during bulk deletion
         await interaction.response.defer(ephemeral=True)
 
         try:
-            # 1. Syncing with all our rebuilt collections
+            # 1. Purging all collections created across our 17 previous files
             collections = [
-                db.players, db.npcs, db.clans, db.items, 
-                db.techniques, db.fighting_styles, db.codes, 
-                db.raids, db.guild_config, db.skills, db.db["skills_library"]
+                db.players, 
+                db.npcs, 
+                db.clans, 
+                db.items, 
+                db.techniques, 
+                db.fighting_styles, 
+                db.codes, 
+                db.raids, 
+                db.guild_config, 
+                db.skills, 
+                db.db["skills_library"],
+                db.db["settings"] # Added this to clear World Boss settings too
             ]
 
             for collection in collections:
                 await collection.delete_many({})
 
-            # 2. Visual Announcement of the Reset
+            # 2. Visual Announcement
             nuke_embed = discord.Embed(
                 title="🌌 THE VOID HAS CONSUMED THE WORLD",
                 description=(
@@ -48,15 +57,16 @@ class NukeCog(commands.Cog):
                     "• All **Sorcerers** have been forgotten.\n"
                     "• All **Cursed Techniques** have faded.\n"
                     "• All **Manifestations** have been exorcised.\n\n"
-                    "The world is now a blank canvas."
+                    "The world is now a blank canvas. Start anew with `/start`."
                 ),
-                color=0x000000 # Absolute Black
+                color=0x000000 
             )
-            nuke_embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZndqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqJmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/vY009/giphy.gif") # Optional: A GIF of a white flash or explosion
             
             BannerManager.apply(nuke_embed, type="combat")
             
             await interaction.followup.send("💥 The database has been successfully purged.", ephemeral=True)
+            
+            # Sending the public announcement to the channel where it was triggered
             await interaction.channel.send(embed=nuke_embed)
 
         except Exception as e:
@@ -64,4 +74,4 @@ class NukeCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(NukeCog(bot))
-    
+                
