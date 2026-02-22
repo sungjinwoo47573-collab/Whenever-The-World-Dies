@@ -10,7 +10,7 @@ def player_model(user_id, username):
         "name": username,
         "level": 1,
         "xp": 0,
-        "money": 500, # Starting Yen for the shop
+        "money": 500, # Starting Yen
         "stat_points": 5,
         "grade": "Grade 4",
         "clan": "None",
@@ -22,13 +22,13 @@ def player_model(user_id, username):
             "current_ce": 100, 
             "dmg": 20
         },
-        "inventory": [], # Holds names of Techniques, Weapons, and Styles
+        "inventory": [], # List of strings: ["Shrine", "Playful Cloud"]
         "loadout": {
             "technique": None, 
             "weapon": None, 
             "fighting_style": None
         },
-        "mastery": {}, # Key-value: {"Shrine": 100}
+        "mastery": {}, # Track proficiency: {"Shrine": 120}
         "created_at": time.time()
     }
 
@@ -41,18 +41,18 @@ def clan_model(name, hp_buff, ce_buff, dmg_buff, roll_chance):
         "hp_buff": hp_buff,
         "ce_buff": ce_buff,
         "dmg_buff": dmg_buff,
-        "roll_chance": roll_chance # e.g., 0.01 for 1%
+        "roll_chance": roll_chance # 0.01 = 1%
     }
 
 def technique_model(name, stock_chance, price=0):
     """
-    Used by AdminCog and WorldCog shop logic.
+    Blueprint for Cursed Techniques in the Gacha/Shop.
     """
     return {
         "name": name,
         "stock_chance": stock_chance,
         "price": price,
-        "domain": None # Nested domain_data when configured
+        "domain": None # Configured via /domain_set
     }
 
 def npc_model(name, hp, dmg, img, is_world_boss=False):
@@ -67,22 +67,22 @@ def npc_model(name, hp, dmg, img, is_world_boss=False):
         "base_dmg": dmg,
         "image": img,
         "phase": 1,
-        "technique": None, # Used for reactive boss counters
+        "technique": None, # For reactive boss moves
         "weapon": None,
         "fighting_style": None,
         "mastery_drop": 50,
         "money_drop": 1000,
-        "drops": [] # List of {"item": str, "chance": float}
+        "drops": [] # List of dicts: {"item": str, "chance": float}
     }
 
 def skill_model(name, move_number, move_title, damage, rarity="Common"):
     """
-    The move blueprint for !CE, !W, and !F commands.
+    The move blueprint for !CE, !W, and !F combat commands.
     """
     return {
-        "name": name,           # The name of the Technique/Weapon it belongs to
+        "name": name,           # Linked Technique/Weapon name
         "move_number": move_number, # 1, 2, or 3
-        "move_title": move_title,   # e.g., "Dismantle"
+        "move_title": move_title,   # e.g., "Divergent Fist"
         "damage": damage,
         "rarity": rarity,
         "effect": None
@@ -90,7 +90,7 @@ def skill_model(name, move_number, move_title, damage, rarity="Common"):
 
 def item_model(name, price, is_weapon=True, dmg_buff=0, hp_buff=0):
     """
-    Used for Weapons and Accessories in the shop.
+    Used for Weapons and Accessories.
     """
     return {
         "name": name,
