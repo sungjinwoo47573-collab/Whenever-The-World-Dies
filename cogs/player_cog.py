@@ -16,27 +16,29 @@ class PlayerCog(commands.Cog):
         if exists:
             return await interaction.response.send_message("❌ You already have a profile!", ephemeral=True)
         
-        # NEW: Default data structure including loadout and inventory
+        # Initial Data Structure - Standardized Keys
         new_player = {
             "_id": user_id,
             "name": interaction.user.name,
             "level": 1,
             "xp": 0,
-            "money": 500, # Starting Yen
+            "money": 500,
             "stat_points": 5,
             "grade": "Grade 4",
             "clan": "None",
+            "clan_rerolls": 3,
             "stats": {
-                "max_hp": 500, "current_hp": 500,
-                "max_ce": 100, "current_ce": 100,
+                "hp": 500, "current_hp": 500,
+                "ce": 100, "cur_ce": 100, # Synchronized pool keys
                 "dmg": 20
             },
-            "inventory": [], # Purchased techniques/weapons go here
-            "loadout": {     # Currently active gear goes here
+            "inventory": [],
+            "loadout": {
                 "technique": None,
                 "weapon": None,
                 "fighting_style": None
-            }
+            },
+            "mastery": {}
         }
         
         await db.players.insert_one(new_player)
@@ -67,7 +69,7 @@ class PlayerCog(commands.Cog):
         progress = min(10, int((xp / xp_needed) * 10))
         bar = "▰" * progress + "▱" * (10 - progress)
         
-        embed = discord.Embed(title=f"⛩️ SORCERER: {data['name']}", color=0x2b2d31)
+        embed = discord.Embed(title=f"⛩️ SORCERER: {data.get('name', target.name)}", color=0x2b2d31)
         embed.set_thumbnail(url=target.display_avatar.url)
         
         # Status Section
@@ -78,7 +80,7 @@ class PlayerCog(commands.Cog):
             f"**XP:** `{bar}` ({xp}/{xp_needed})"
         )
         
-        # ACTIVE LOADOUT (Critical for World Boss Combat)
+        # ACTIVE LOADOUT
         embed.add_field(
             name="🥋 Active Loadout",
             value=f"🌀 **CT:** `{loadout.get('technique', 'None')}`\n"
@@ -87,11 +89,11 @@ class PlayerCog(commands.Cog):
             inline=False
         )
         
-        # STATS
+        # STATS - Using Synchronized Keys
         embed.add_field(
             name="📊 Attributes", 
-            value=f"❤️ **HP:** `{stats.get('max_hp')}`\n"
-                  f"🧪 **CE:** `{stats.get('max_ce')}`\n"
+            value=f"❤️ **HP:** `{stats.get('hp')}`\n"
+                  f"🧪 **CE:** `{stats.get('ce')}`\n"
                   f"💥 **DMG:** `{stats.get('dmg')}`", 
             inline=True
         )
@@ -121,23 +123,23 @@ class PlayerCog(commands.Cog):
 
         if amount <= 0: return await interaction.response.send_message("❌ Enter a valid amount.", ephemeral=True)
 
-        # Mapping and scaling
-        stat_map = {"hp": "stats.max_hp", "ce": "stats.max_ce", "dmg": "stats.dmg"}
-        # HP/CE give 25 per point, DMG gives 5 per point for better scaling
+        # Mapping and scaling (Using synchronized keys: stats.hp and stats.ce)
+        stat_map = {"hp": "stats.hp", "ce": "stats.ce", "dmg": "stats.dmg"}
+        pool_map = {"hp": "stats.current_hp", "ce": "stats.cur_ce"}
+        
         multiplier = 25 if stat.value in ["hp", "ce"] else 5
         inc_val = amount * multiplier
 
-        await db.players.update_one(
-            {"_id": user_id},
-            {
-                "$inc": {stat_map[stat.value]: inc_val, "stat_points": -amount},
-                # Heal them to their new max
-                "$set": {"stats.current_hp": player['stats']['max_hp'] + inc_val} 
-            }
-        )
+        update_query = {"$inc": {stat_map[stat.value]: inc_val, "stat_points": -amount}}
+        
+        # If updating HP or CE, also increase the current pool so they don't have to heal
+        if stat.value in pool_map:
+            update_query["$inc"][pool_map[stat.value]] = inc_val
+
+        await db.players.update_one({"_id": user_id}, update_query)
         
         await interaction.response.send_message(f"📈 **{stat.name}** increased by **{inc_val}**!")
 
 async def setup(bot):
     await bot.add_cog(PlayerCog(bot))
-        
+                      
