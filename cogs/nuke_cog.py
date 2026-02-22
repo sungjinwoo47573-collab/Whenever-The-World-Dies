@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.banner_manager import BannerManager
 
 class NukeCog(commands.Cog):
     def __init__(self, bot):
@@ -9,49 +10,58 @@ class NukeCog(commands.Cog):
 
     @app_commands.command(
         name="wipe_everything", 
-        description="⚠️ EXTREME ACTION: Resets the entire bot database (Players, NPCs, Techniques, etc.)"
+        description="⚠️ ULTIMATE AUTHORITY: Erase all data across the entire Jujutsu database."
     )
-    @commands.is_owner() # Strictly restricted to the Bot Owner
-    async def wipe_everything(self, interaction: discord.Interaction, confirm: str):
+    @commands.is_owner() # Restricted to the Bot Owner only
+    async def wipe_everything(self, interaction: discord.Interaction, confirmation_phrase: str):
         """
-        Deletes all data across all collections.
-        Requires the user to type 'CONFIRM TOTAL WIPE' exactly.
+        Total system reset. Deletes players, npcs, items, and the skills library.
+        Safety Phrase: 'ERASE THE CURRENT ERA'
         """
-        if confirm != "CONFIRM TOTAL WIPE":
+        safety_phrase = "ERASE THE CURRENT ERA"
+        
+        if confirmation_phrase != safety_phrase:
             return await interaction.response.send_message(
-                "❌ Safety Cancelled. You must type `CONFIRM TOTAL WIPE` exactly to proceed.", 
+                f"❌ **Safety Protocol Active.** To purge the world, you must type: `{safety_phrase}`", 
                 ephemeral=True
             )
 
+        # Deferring as bulk deletion in MongoDB can take a moment
         await interaction.response.defer(ephemeral=True)
 
         try:
-            # Drop/Clear all major collections
-            await db.players.delete_many({})
-            await db.npcs.delete_many({})
-            await db.clans.delete_many({})
-            await db.items.delete_many({})
-            await db.techniques.delete_many({})
-            await db.fighting_styles.delete_many({})
-            await db.codes.delete_many({})
-            await db.raids.delete_many({})
-            await db.guild_config.delete_many({})
-            await db.db["skills_library"].delete_many({})
+            # 1. Syncing with all our rebuilt collections
+            collections = [
+                db.players, db.npcs, db.clans, db.items, 
+                db.techniques, db.fighting_styles, db.codes, 
+                db.raids, db.guild_config, db.skills, db.db["skills_library"]
+            ]
 
-            # Send a public announcement of the rebirth
+            for collection in collections:
+                await collection.delete_many({})
+
+            # 2. Visual Announcement of the Reset
             nuke_embed = discord.Embed(
-                title="🌌 THE WORLD HAS BEEN REBORN",
-                description="The previous timeline has been erased. All sorcerers, curses, and techniques have ceased to exist.",
-                color=0x000000
+                title="🌌 THE VOID HAS CONSUMED THE WORLD",
+                description=(
+                    "The current era has reached its conclusion.\n\n"
+                    "• All **Sorcerers** have been forgotten.\n"
+                    "• All **Cursed Techniques** have faded.\n"
+                    "• All **Manifestations** have been exorcised.\n\n"
+                    "The world is now a blank canvas."
+                ),
+                color=0x000000 # Absolute Black
             )
-            nuke_embed.set_footer(text="System Reset Complete.")
+            nuke_embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqZndqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqZ3ZqJmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/vY009/giphy.gif") # Optional: A GIF of a white flash or explosion
             
-            await interaction.followup.send("💥 Database purged successfully.", ephemeral=True)
+            BannerManager.apply(nuke_embed, type="combat")
+            
+            await interaction.followup.send("💥 The database has been successfully purged.", ephemeral=True)
             await interaction.channel.send(embed=nuke_embed)
 
         except Exception as e:
-            await interaction.followup.send(f"❌ An error occurred during the wipe: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Critical Error during Purge: {e}", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(NukeCog(bot))
-  
+    
