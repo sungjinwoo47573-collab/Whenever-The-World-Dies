@@ -19,7 +19,7 @@ class MasteryAdminCog(commands.Cog):
     async def set_mastery(self, interaction: discord.Interaction, user: discord.Member, category: str, name: str, amount: int):
         """
         Force-sets mastery points for a specific item/style.
-        Mastery usually unlocks higher DMG or Domain Expansions.
+        Mastery is stored as mastery.ItemName to track individual proficiency.
         """
         user_id = str(user.id)
         player = await db.players.find_one({"_id": user_id})
@@ -28,7 +28,7 @@ class MasteryAdminCog(commands.Cog):
             return await interaction.response.send_message("❌ This sorcerer does not have a profile.", ephemeral=True)
 
         # Update the specific mastery field for the item name
-        # We store this as mastery.ItemName to allow multiple masteries
+        # Using $set to overwrite or create the specific entry in the mastery object
         await db.players.update_one(
             {"_id": user_id},
             {"$set": {f"mastery.{name}": amount}}
@@ -37,9 +37,9 @@ class MasteryAdminCog(commands.Cog):
         embed = discord.Embed(
             title="📈 MASTERY CALIBRATION",
             description=f"The depth of **{user.display_name}'s** understanding has been altered.",
-            color=0x9b59b6 # Purple for mastery/wisdom
+            color=0x9b59b6
         )
-        embed.add_field(name="Subject", value=f"**{name}** ({category.title()})", inline=True)
+        embed.add_field(name="Subject", value=f"**{name}** ({category.replace('_', ' ').title()})", inline=True)
         embed.add_field(name="New Mastery", value=f"`{amount}` Points", inline=True)
         
         BannerManager.apply(embed, type="admin")
@@ -48,7 +48,7 @@ class MasteryAdminCog(commands.Cog):
     @app_commands.command(name="mastery_drop_set", description="Admin: Set mastery points rewarded for defeating an NPC.")
     @is_admin()
     async def mastery_drop_set(self, interaction: discord.Interaction, npc_name: str, amount: int):
-        """Sets the reward amount for the post-combat mastery calculation."""
+        """Sets the mastery reward amount for NPCs (Standard or World Bosses)."""
         result = await db.npcs.update_one(
             {"name": npc_name},
             {"$set": {"mastery_drop": amount}}
@@ -68,4 +68,4 @@ class MasteryAdminCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(MasteryAdminCog(bot))
-    
+            
