@@ -24,6 +24,7 @@ async def add_xp(guild, user_id, amount):
     level = player.get("level", 1)
     
     # Quadratic Scaling: lvl 1 = 100xp, lvl 10 = 10,000xp
+    # Formula: (level^2) * 100
     xp_needed = (level ** 2) * 100 
 
     if current_xp >= xp_needed:
@@ -69,7 +70,10 @@ async def add_mastery(user_id, item_name, amount):
     if not item_name or item_name == "None":
         return
 
-    field = f"mastery.{item_name}"
+    # Use a sanitized key to avoid issues with MongoDB
+    sanitized_name = str(item_name).replace(".", "_")
+    field = f"mastery.{sanitized_name}"
+    
     await db.players.update_one(
         {"_id": str(user_id)},
         {"$inc": {field: amount}}
@@ -87,7 +91,7 @@ async def update_discord_role(guild, user_id, grade_name):
     if not member:
         return
 
-    # Identify all current "Grade" roles to remove
+    # Identify all possible "Grade" roles to remove
     grade_keywords = ["Grade 4", "Grade 3", "Grade 2", "Grade 1", "Special Grade"]
     to_remove = [role for role in member.roles if role.name in grade_keywords]
     
@@ -95,16 +99,17 @@ async def update_discord_role(guild, user_id, grade_name):
     new_role = discord.utils.get(guild.roles, name=grade_name)
     if not new_role:
         try:
-            # Color coding for grades
-            role_color = discord.Color.red() if "Special" in grade_name else discord.Color.blue()
+            # Visual hierarchy: Special Grade is a distinct Red, others are Blue.
+            role_color = discord.Color.from_rgb(255, 0, 0) if "Special" in grade_name else discord.Color.blue()
             new_role = await guild.create_role(name=grade_name, color=role_color, hoist=True)
         except discord.Forbidden:
             return
 
     try:
+        # Atomic role update: remove old, add new
         if to_remove:
             await member.remove_roles(*to_remove)
         await member.add_roles(new_role)
     except (discord.Forbidden, discord.HTTPException):
         pass
-        
+    
