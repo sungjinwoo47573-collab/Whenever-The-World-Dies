@@ -11,25 +11,25 @@ async def create_backup():
         os.makedirs(BACKUP_DIR)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # major collections to backup
     collections = ["players", "clans", "items", "techniques", "codes"]
     backup_results = {}
 
-    # Access the raw database object from the connection
-    database = db.get_io_loop().run_until_complete(db.client.get_database()) if hasattr(db, 'client') else db
-
     for coll_name in collections:
-        # FIX: Ensure we are subscripting the database object, not the wrapper
         try:
-            cursor = db[coll_name].find({})
+            # FIX: Using getattr to safely access the collection from the db object
+            collection = getattr(db, coll_name)
+            cursor = collection.find({})
             data = await cursor.to_list(length=None)
             
             file_path = f"{BACKUP_DIR}/{coll_name}_{timestamp}.json"
             with open(file_path, "w") as f:
+                # default=str handles ObjectId and datetime objects
                 json.dump(data, f, indent=4, default=str)
             
             backup_results[coll_name] = len(data)
         except Exception as e:
-            print(f"Backup Error on {coll_name}: {e}")
+            print(f"⚠️ Backup Error on {coll_name}: {e}")
 
     return timestamp, backup_results
     
