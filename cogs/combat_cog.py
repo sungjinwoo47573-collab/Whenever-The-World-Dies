@@ -1,14 +1,19 @@
 import discord
 from discord.ext import commands
 from database.connection import db
-from systems.combat import active_combats, get_black_flash, apply_effect, npc_ai_loop
-from utils.embeds import JJKEmbeds
-from utils.checks import handle_fatality
+from utils.banner_manager import BannerManager
 import random
+import asyncio
 
 class CombatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def calculate_black_flash(self, damage):
+        """Standard 1% chance for a 2.5x damage spike."""
+        if random.random() < 0.01: # 1% Chance
+            return int(damage * 2.5), True
+        return damage, False
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -17,98 +22,96 @@ class CombatCog(commands.Cog):
 
         content = message.content.upper()
         user_id = str(message.author.id)
-        channel_id = message.channel.id
 
-        # Check if combat is active in this channel
-        if channel_id not in active_combats:
-            return
-
-        combat = active_combats[channel_id]
-        player = await db.players.find_one({"_id": user_id})
-        if not player: return
-
-        prefix = ""
-        slot = ""
-        category = ""
-
-        # Parse Prefix: !CE1-5, !F1-3, !W1-4
-        if content.startswith("!CE"):
-            prefix, category = "!CE", "technique"
-            slot = content.replace("!CE", "")
-        elif content.startswith("!F"):
-            prefix, category = "!F", "fighting_style"
-            slot = content.replace("!F", "")
-        elif content.startswith("!W"):
-            prefix, category = "!W", "weapon"
-            slot = content.replace("!W", "")
-        elif content == "!DOMAIN":
-            return await self.handle_domain(message, player, combat)
-        else:
-            return
-
-        # 1. Get the equipped item/tech name
-        equipped_item = player["loadout"].get(category)
-        if not equipped_item:
-            return await message.reply(f"❌ You don't have a {category} equipped!")
-
-        # 2. Find the skill name mapped to that slot
-        source_data = None
-        if category == "technique":
-            source_data = await db.techniques.find_one({"name": equipped_item})
-        elif category == "weapon":
-            source_data = await db.items.find_one({"name": equipped_item})
-        elif category == "fighting_style":
-            source_data = await db.fighting_styles.find_one({"name": equipped_item})
-
-        if not source_data or slot not in source_data.get("skills", {}):
-            return await message.reply(f"❌ Skill slot {slot} is empty for {equipped_item}.")
-
-        skill_name = source_data["skills"][slot]
+        # Identification of the attack type
+        category_map = {"!CE": "technique", "!F": "fighting_style", "!W": "weapon"}
+        prefix = None
+        for p in category_map.keys():
+            if content.startswith(p):
+                prefix = p
+                break
         
-        # 3. Fetch Skill Stats (DMG & Effects) from Skills Library
-        skill_stats = await db.db["skills_library"].find_one({"name": skill_name})
-        if not skill_stats:
-            return await message.reply(f"❌ Skill data for **{skill_name}** not found in Library.")
+        if not prefix:
+            return
 
-        # 4. Calculation: Base + Player DMG Stat + Variance
-        base_dmg = skill_stats["damage"]
-        variance = combat.get("variance", 1.0)
-        total_dmg = int((base_dmg + player["stats"]["dmg"]) * variance)
+        # 1. Player & Boss Verification
+        player = await db.players.find_one({"_id": user_id})
+        # Check for any active boss or NPC in the database
+        boss = await db.npcs.find_one({"is_world_boss": True, "current_hp": {"$gt": 0}})
 
-        # 5. Black Flash Check
-        final_dmg, is_bf = get_black_flash(total_dmg)
+        if not player: return
+        if not boss:
+            return await message.reply("🌑 There is no active threat to strike.")
 
-        # 6. Apply Effects (Burn, Drain, etc.)
-        effect_msg = await apply_effect("npc", channel_id, user_id, skill_stats.get("effect"), final_dmg)
+        # 2. Parsing move number (e.g., !CE 1)
+        try:
+            move_num = int(content.replace(prefix, "").strip())
+        except ValueError:
+            move_num = 1
 
-        # 7. Update NPC HP and Player Aggro
-        npc = combat["npc"]
-        npc["hp"] -= final_dmg
-        active_combats[channel_id]["players"][user_id] = active_combats[channel_id]["players"].get(user_id, 0) + final_dmg
+        # 3. Loadout Check
+        category = category_map[prefix]
+        active_item = player.get("loadout", {}).get(category)
 
-        # UI Response
-        embed = JJKEmbeds.combat_log(player["name"], npc["name"], skill_name, final_dmg, is_bf, effect_msg)
+        if not active_item:
+            return await message.reply(f"❌ You don't have a **{category.replace('_', ' ')}** equipped! Use `/equip`.")
+
+        # 4. CE Cost (Only for Technique)
+        if category == "technique":
+            ce_cost = move_num * 15
+            current_ce = player.get("stats", {}).get("current_ce", 0)
+            if current_ce < ce_cost:
+                return await message.reply(f"⚠️ Insufficient CE! Need `{ce_cost}`, you have `{current_ce}`.")
+            await db.players.update_one({"_id": user_id}, {"$inc": {"stats.current_ce": -ce_cost}})
+
+        # 5. Skill Data & Damage Calculation
+        skill_data = await db.skills.find_one({"name": active_item, "move_number": move_num})
+        if not skill_data:
+            return await message.reply(f"❌ Move `{move_num}` for **{active_item}** is not registered.")
+
+        base_dmg = skill_data.get("damage", 0)
+        player_dmg_stat = player.get("stats", {}).get("dmg", 10)
+        
+        # Apply 2-5% Player Variance
+        player_variance = random.uniform(0.98, 1.05)
+        total_dmg = int((base_dmg + player_dmg_stat) * player_variance)
+        
+        # Black Flash!
+        final_dmg, is_bf = self.calculate_black_flash(total_dmg)
+
+        # 6. Apply Damage to Boss
+        new_hp = max(0, boss["current_hp"] - final_dmg)
+        await db.npcs.update_one({"_id": boss["_id"]}, {"$set": {"current_hp": new_hp}})
+
+        # 7. UI Combat Log
+        rarity = skill_data.get("rarity", "Common")
+        colors = {"Common": 0x95a5a6, "Rare": 0x3498db, "Epic": 0x9b59b6, "Legendary": 0xf1c40f, "Special Grade": 0xe74c3c}
+        
+        embed = discord.Embed(
+            title=f"💥 {'BLACK FLASH!' if is_bf else 'CRITICAL STRIKE!'}",
+            description=f"**{player['name']}** uses **{skill_data.get('move_title', active_item)}**!\n"
+                        f"Target: **{boss['name']}**\n"
+                        f"Damage: `{final_dmg:,}`",
+            color=0x000000 if is_bf else colors.get(rarity, 0x2b2d31)
+        )
+        if is_bf: embed.set_footer(text="The sparks of black do not choose who to bless.")
+        BannerManager.apply(embed, type="combat")
         await message.channel.send(embed=embed)
 
-        # 8. Check if NPC is dead
-        if npc["hp"] <= 0:
-            from systems.economy import distribute_rewards
-            rewards = await distribute_rewards(message, channel_id, npc)
-            active_combats.pop(channel_id)
-            await message.channel.send(f"🎊 **{npc['name']}** has been exorcised!")
-            # Send reward summary here...
-
-    async def handle_domain(self, message, player, combat):
-        tech_name = player["loadout"].get("technique")
-        tech_data = await db.techniques.find_one({"name": tech_name})
-        
-        if not tech_data or not tech_data.get("domain"):
-            return await message.reply("❌ Your technique does not possess a Domain Expansion.")
-
-        domain = tech_data["domain"]
-        # Apply Buffs temporarily (Logic would track this in active_combats)
-        await message.channel.send(f"🤞 **DOMAIN EXPANSION: {domain['name']}**\n{player['name']} receives massive stat buffs!")
+        # 8. Trigger Reactive Counter
+        # This calls the Boss Retaliation logic directly from the WorldBossCog
+        wb_cog = self.bot.get_cog("WorldBossCog")
+        if wb_cog and new_hp > 0:
+            # We update the local boss object for the retaliation function
+            boss["current_hp"] = new_hp 
+            await asyncio.sleep(1.5)
+            await wb_cog.boss_retaliation(message.channel, boss)
+        elif new_hp <= 0:
+            if boss.get("phase") == 1:
+                await wb_cog.trigger_phase_two(message.channel, boss)
+            else:
+                await message.channel.send(f"🎊 **{boss['name']}** has been exorcised by **{player['name']}**!")
 
 async def setup(bot):
     await bot.add_cog(CombatCog(bot))
-    
+            
